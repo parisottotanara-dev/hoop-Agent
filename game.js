@@ -396,7 +396,7 @@ async function gunzip(b64) {
 /* Economia agenzia                                                    */
 /* ================================================================== */
 const STAFF = {
-  scout: { name: 'Rete di scout', icon: '🔭', desc: 'Stime più precise sul potenziale dei prospetti e sconto sulle osservazioni.' },
+  scout: { name: 'Rete di scout', icon: '🔭', desc: 'Stime più precise sul potenziale dei prospetti, e ogni livello fa costare meno le osservazioni (fino a 4 a settimana).' },
   legal: { name: 'Ufficio legale', icon: '⚖️', desc: 'Avvocati più bravi: le squadre finiscono per offrire qualcosa in più ai tuoi clienti.' },
   marketing: { name: 'Marketing', icon: '📣', desc: 'Il tuo nome gira di più: gli sponsor pagano meglio i tuoi clienti e i giocatori ti conoscono già quando li contatti.' },
   office: { name: 'Uffici', icon: '🏢', desc: 'Uffici più grandi e più collaboratori: puoi seguire più clienti.' },
@@ -964,10 +964,18 @@ function talkSign(pid, comm, bonus, promises = []) {
   return { msg: `${p.name} ha firmato con la tua agenzia: ${comm}%${bonus ? ` e $${bonus}k alla firma` : ''}.`, type: 'good', done: true };
 }
 function talkQuit(pid) { delete S.talks[pid]; }
+// osservare un prospetto: viaggio e biglietti costano, all'estero di più. La rete di scout fa risparmiare.
+const SCOUT_MAX = 4;
+const scoutCost = p => Math.round((/\(|G-League/.test(p.school || '') ? 12000 : 7000) * (1 - (S.staff.scout || 0) * 0.12) / 500) * 500;
+const scoutsLeft = () => SCOUT_MAX - (S.scoutWeek === S.turn ? S.scoutN || 0 : 0);
 function scout(pid) {
-  const p = P(pid), cost = Math.max(1000, 3000 - S.staff.scout * 400);
-  if (S.cash < cost) return 'Fondi insufficienti.';
+  const p = P(pid), cost = scoutCost(p);
+  if (p.scouted) return `${p.name} lo hai già fatto osservare.`;
+  if (scoutsLeft() <= 0) return `I tuoi scout sono già in viaggio per altri ${SCOUT_MAX} ragazzi: torna la prossima settimana.`;
+  if (S.cash < cost) return `Servono ${fmt$(cost)} per mandare uno scout.`;
   spend(cost); p.scouted = true;
+  if (S.scoutWeek !== S.turn) { S.scoutWeek = S.turn; S.scoutN = 0; }
+  S.scoutN++;
   return `Rapporto dello scout su ${p.name}: OVR ${shownOvr(p)}, potenziale ~${shownPot(p)}.`;
 }
 function releaseClient(pid) {
@@ -3045,7 +3053,7 @@ const UI = {
       </div>
       ${full ? '<div class="note warn">Hai raggiunto il limite di clienti: amplia gli <b>Uffici</b> nella scheda Staff.</div>' : ''}
       ${pros ? this.intelBox() : ''}
-      <p class="small muted">${pros ? 'Le valutazioni dei prospetti sono stime (~). <b>🔭 Osserva</b> per vederli meglio, <b>🤝 Coltiva</b> per creare un legame prima del Draft: chi ti è legato accetta più facilmente e a volte sceglie te da solo.' :
+      <p class="small muted">${pros ? 'Le valutazioni dei prospetti sono stime (~). <b>🔭 Osserva</b> per vederli meglio (i tuoi scout possono seguirne ${SCOUT_MAX} a settimana, questa settimana ne restano ${scoutsLeft()}), <b>🤝 Coltiva</b> per creare un legame prima del Draft: chi ti è legato accetta più facilmente e a volte sceglie te da solo.' :
         this.mkt === 'fa' ? 'I free agent firmati in Free Agency ricevono subito offerte dalle squadre.' : 'Strappare un giocatore a un\'agenzia rivale è più difficile.'}</p>
       ${groups.filter(g => g[2].length).map(([h, sub, g, cls]) => `
         <section class="mk-group">
@@ -3071,7 +3079,7 @@ const UI = {
       ${intel || p.bondTip || deadline != null ? `<div class="mk-tags">${intel ? '<span class="tag intel">🕵️ soffiata sul potenziale</span>' : ''}${p.bondTip ? '<span class="tag hot">💬 vuole essere seguito</span>' : ''}${deadline != null ? `<span class="tag inj">⏳ un rivale lo firma tra ${Math.max(0, deadline)} sett.</span>` : ''}</div>` : ''}
       <div class="mk-foot"><span class="val">Valore ${ex ? '' : '~'}${fmtM(shownValue(p))}</span>
         <span class="mk-act">
-          ${!ex && p.school ? `<button class="btn sm" onclick="UI.doScout(${p.id})" title="Manda uno scout">${ic('eye')} Osserva</button>` : ''}
+          ${!ex && p.school ? `<button class="btn sm" onclick="UI.doScout(${p.id})" ${scoutsLeft() <= 0 ? 'disabled' : ''} title="Manda uno scout">${ic('eye')} Osserva ${fmt$(scoutCost(p))}</button>` : ''}
           ${p.school ? `<button class="btn sm" onclick="UI.doCultivate(${p.id})" ${p.lastBond === S.turn ? 'disabled' : ''} title="Costa ${fmt$(cultivateCost(p))}">🤝 Coltiva ${fmt$(cultivateCost(p))}</button>` : ''}
           <button class="btn primary sm" onclick="UI.pitchModal(${p.id})" ${full ? 'disabled' : ''}>Proponi</button>
         </span></div>
@@ -3085,7 +3093,7 @@ const UI = {
       ${S.intel.length ? `<ul>${S.intel.slice(0, 4).map(r => `<li><a href="#" onclick="UI.player(${r.pid});return false">${esc(r.text)}</a><small>${esc(r.when)}</small></li>`).join('')}</ul>` : '<p class="small muted">Ancora nessuna soffiata: arriveranno nelle prossime settimane.</p>'}</div>`;
   },
   doCultivate(pid) { const r = cultivate(pid); toast(r.msg, r.type); save(); this.render(); },
-  doScout(pid) { toast(scout(pid), 'intel', 'Rapporto scout'); save(); this.render(); },
+  doScout(pid) { const m = scout(pid); toast(m + (P(pid).scouted && /^Rapporto/.test(m) ? ` Osservazioni rimaste questa settimana: ${scoutsLeft()}.` : ''), 'intel', 'Rapporto scout'); save(); this.render(); },
 
   /* ---------- Righe dei clienti in Home ---------- */
   clientRow(p) {
@@ -3346,7 +3354,7 @@ const UI = {
           <button class="btn bad sm" onclick="UI.release(${p.id})">Interrompi rapporto</button>`
           : `<button class="btn primary sm" onclick="UI.pitchModal(${p.id})">${S.talks[p.id] ? 'Riprendi la trattativa' : 'Proponi agenzia'}</button>
           ${p.school ? `<button class="btn sm" onclick="UI.recModal(${p.id})">${ic('megaphone')} Consiglia a una squadra</button>` : ''}
-          ${!ex && p.school ? `<button class="btn sm" onclick="UI.doScout(${p.id});UI.player(${p.id})">${ic('eye')} Osserva</button>` : ''}`}
+          ${!ex && p.school ? `<button class="btn sm" onclick="UI.doScout(${p.id});UI.player(${p.id})" ${scoutsLeft() <= 0 ? 'disabled' : ''}>${ic('eye')} Osserva (${fmt$(scoutCost(p))})</button>` : ''}`}
       </div>`);
   },
 
@@ -3363,6 +3371,31 @@ const UI = {
 
   /* ---------- Lega ---------- */
   lgTab: null,
+  // rosa di una squadra, ruolo per ruolo
+  teamModal(tid) {
+    const t = S.teams[tid], dc = depthChart(tid, false), now = depthChart(tid, true);
+    const roster = rosterOf(tid), pr = payroll(tid), stake = stakeOf(tid);
+    const pw = powerRanking().findIndex(x => x.id === tid) + 1;
+    const row = p => {
+      const e = now.get(p.id) || dc.get(p.id);
+      return `<button class="tm-p ${isClient(p) ? 'mine' : ''}" onclick="UI.player(${p.id})">${avatarSVG(p, 34)}
+        <span class="tm-i"><b>${esc(p.name)}${isClient(p) ? ' <span class="tag fa">tuo</span>' : ''}${p.star || p.vip ? ' ' + ic('star', 'in star') : ''}</b>
+          <small>${p.injury ? `<span class="bad">infortunato ${p.injury} sett.</span> · ` : ''}${roleLabel(e, p)}${e && e.min ? ` · ~${e.min} min` : ''}</small>
+          <small>${p.age} anni · ${fmtM(p.salary)} per ${p.years} ann${p.years > 1 ? 'i' : 'o'}${p.gp ? ` · ${r1(avg(p, 'pts'))} pt` : ''}</small></span>
+        <span class="tm-o"><small>OVR</small><b>${p.ovr}</b></span></button>`;
+    };
+    const order = { start: 0, bench: 1, third: 2, deep: 3 };
+    const groups = POS_LIST.map(pos => [pos, roster.filter(p => (dc.get(p.id) || {}).pos === pos && (dc.get(p.id) || {}).slot !== 'deep')
+      .sort((a, b) => order[dc.get(a.id).slot] - order[dc.get(b.id).slot])]);
+    const deep = roster.filter(p => !dc.get(p.id) || dc.get(p.id).slot === 'deep').sort(rotCmp);
+    this.openModal(`<div class="tm-head">${teamChip(tid, true)}<div><h3>${esc(teamName(t))}</h3>
+        <p class="small muted">${confRank(tid)}ª a ${CONF_NAME[confOf(t)]} · ${t.w}-${t.l} · ultime 10: ${last10(t)} · ${pw}ª nel power ranking</p></div></div>
+      <div class="tm-facts"><span>Forza <b>${teamStrength(tid).toFixed(1)}</b></span><span>Monte ingaggi <b>${fmtM(pr)}</b></span>
+        <span>Spazio cap <b class="${CAP - pr > 0 ? 'good' : 'muted'}">${CAP - pr > 0 ? fmtM(CAP - pr) : 'nessuno'}</b></span><span>Rapporto <b>${relLabel(teamRel(tid))}</b></span>${stake ? `<span>Tua quota <b class="gold">${stake}%</b></span>` : ''}</div>
+      <p class="small">Cercano: ${needChips(tid)}</p>
+      ${groups.map(([pos, ps]) => ps.length ? `<div class="tm-pos">${POS_NAME[pos][0].toUpperCase() + POS_NAME[pos].slice(1)}</div>${ps.map(row).join('')}` : '').join('')}
+      ${deep.length ? `<div class="tm-pos">Fondo panchina</div>${deep.map(row).join('')}` : ''}`);
+  },
   // in Home durante i playoff: a che punto sono le squadre dei tuoi clienti
   poHomeCard() {
     const po = S.po, my = myTeamIds();
@@ -3383,20 +3416,20 @@ const UI = {
     const st = confStandings(c), lead = st[0];
     return `<div class="tbl-wrap"><table class="conf-t">
         <tr><th>#</th><th>Squadra</th><th class="num">V</th><th class="num">P</th><th class="num">%</th><th class="num">Dist.</th><th class="num">Ult. 10</th><th class="num">Serie</th></tr>
-        ${st.map((t, i) => { const gb = gamesBehind(t, lead); return `<tr class="${myTeams.has(t.id) ? 'mine' : ''}${i === 6 ? ' cutline' : ''}${i === 10 ? ' cutline out' : ''}"><td>${i + 1}</td><td>${esc(teamName(t))}${myTeams.has(t.id) ? ' <i class="po-dot"></i>' : ''}</td><td class="num">${t.w}</td><td class="num">${t.l}</td>
+        ${st.map((t, i) => { const gb = gamesBehind(t, lead); return `<tr class="${myTeams.has(t.id) ? 'mine' : ''}${i === 6 ? ' cutline' : ''}${i === 10 ? ' cutline out' : ''}"><td>${i + 1}</td><td><a class="tlink" href="#" onclick="UI.teamModal(${t.id});return false">${esc(teamName(t))}</a>${myTeams.has(t.id) ? ' <i class="po-dot"></i>' : ''}</td><td class="num">${t.w}</td><td class="num">${t.l}</td>
           <td class="num">${winPct(t).toFixed(3).replace(/^0/, '')}</td><td class="num">${gb ? String(gb).replace('.', ',') : '-'}</td><td class="num">${last10(t)}</td><td class="num">${streakTxt(t)}</td></tr>`; }).join('')}
       </table></div>
-      <p class="small muted">Conference ${CONF_NAME[c]}. Le prime 6 vanno dritte ai playoff, dalla 7ª alla 10ª si giocano gli ultimi due posti nel play-in. Righe evidenziate: squadre con tuoi clienti.</p>`;
+      <p class="small muted">Conference ${CONF_NAME[c]}. Le prime 6 vanno dritte ai playoff, dalla 7ª alla 10ª si giocano gli ultimi due posti nel play-in. Righe evidenziate: squadre con tuoi clienti. Tocca una squadra per vedere la rosa.</p>`;
   },
   v_power(myTeams) {
     const pw = powerRanking(), prev = S.powerPrev || {};
     return `<div class="tbl-wrap"><table>
         <tr><th>#</th><th></th><th>Squadra</th><th class="num">V-P</th><th class="num">Forza</th><th class="num">Monte ingaggi</th><th class="num">Spazio cap</th><th>Rapporto</th></tr>
         ${pw.map((t, i) => { const pr = payroll(t.id), was = prev[t.id], mv = was ? was - (i + 1) : 0;
-          return `<tr class="${myTeams.has(t.id) ? 'mine' : ''}"><td>${i + 1}</td><td class="pw-mv ${mv > 0 ? 'good' : mv < 0 ? 'bad' : 'muted'}">${mv > 0 ? '↑' + mv : mv < 0 ? '↓' + (-mv) : '='}</td><td>${esc(teamName(t))} <small class="muted">${CONF_NAME[confOf(t)]}</small></td><td class="num">${t.w}-${t.l}</td>
+          return `<tr class="${myTeams.has(t.id) ? 'mine' : ''}"><td>${i + 1}</td><td class="pw-mv ${mv > 0 ? 'good' : mv < 0 ? 'bad' : 'muted'}">${mv > 0 ? '↑' + mv : mv < 0 ? '↓' + (-mv) : '='}</td><td><a class="tlink" href="#" onclick="UI.teamModal(${t.id});return false">${esc(teamName(t))}</a> <small class="muted">${CONF_NAME[confOf(t)]}</small></td><td class="num">${t.w}-${t.l}</td>
           <td class="num">${teamStrength(t.id).toFixed(1)}</td><td class="num">${fmtM(pr)}</td><td class="num ${CAP - pr > 0 ? 'good' : 'muted'}">${CAP - pr > 0 ? fmtM(CAP - pr) : '-'}</td><td>${relLabel(teamRel(t.id))} <span class="muted">${teamRel(t.id)}</span></td></tr>`; }).join('')}
       </table></div>
-      <p class="small muted">Le 30 squadre in ordine di forza vera: conta la rosa, ma con il passare delle settimane contano sempre di più i risultati e la forma delle ultime partite. Le frecce dicono quanti posti hanno guadagnato o perso dalla settimana scorsa. Salary cap: ${fmtM(CAP)}.</p>`;
+      <p class="small muted">Le 30 squadre in ordine di forza vera: conta la rosa, ma con il passare delle settimane contano sempre di più i risultati e la forma delle ultime partite. Le frecce dicono quanti posti hanno guadagnato o perso dalla settimana scorsa. Tocca una squadra per vedere la rosa. Salary cap: ${fmtM(CAP)}.</p>`;
   },
   v_league() {
     if (!this.lgTab) { const t = clients().map(teamOf).find(Boolean); this.lgTab = t ? confOf(t) : 'E'; }

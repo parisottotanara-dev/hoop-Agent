@@ -37,7 +37,7 @@ Claude Code legge questo file da solo all'inizio di ogni sessione su questo prog
 **Ordine degli script** in `index.html` e in `tools/build_artifact.py`: names, nations, events, events_extra, traits, tuning, records_data, art, game. Se aggiungi un file JS, mettilo in tutti e due i posti e anche nella lista `APP` di `sw.js`.
 
 ## Regole da rispettare sempre
-1. **Ad ogni rilascio** cambia il numero di `CACHE` in `sw.js` (ora `hoop-agent-v33`), così i telefoni scaricano la versione nuova.
+1. **Ad ogni rilascio** cambia il numero di `CACHE` in `sw.js` (ora `hoop-agent-v34`), così i telefoni scaricano la versione nuova.
 2. **I salvataggi vecchi devono continuare a funzionare.**
    - Lo stato è l'oggetto globale `S`, salvato in localStorage con la chiave `SAVE_KEY = 'superAgenteNBA.save.v2'`. Non cambiare la chiave.
    - Ogni campo nuovo va gestito anche quando manca, nella riga `if (S) { ... }` in fondo a `game.js` e/o con valori predefiniti (`|| 0`).
@@ -76,6 +76,8 @@ Servono Node e Playwright (`require('playwright')`). Ogni script si lancia da so
 - **Trattative con le squadre:** forbice di valore, preferenze del giocatore, scadenze, asta e bluff, salary cap e apron.
 - **Ruoli e minuti:** gerarchie per ruolo (`depthChart`): titolare, riserva, terzo. Le riserve forti giocano anche nel ruolo vicino, e gli infortuni fanno salire il sostituto dello stesso ruolo.
 - **Carriera:** potenziale legato all'età (`potRoom`, `capPot`), crescita e declino (`developPlayer`), infortuni (`injuryHit`, `careFactor`).
+- **Osservare i prospetti:** `scout(pid)` costa 7k (12k all'estero), ogni livello della rete di scout toglie il 12%, massimo 4 a settimana (`SCOUT_MAX`, `scoutsLeft`).
+- **Rosa delle squadre:** nella Lega i nomi delle squadre aprono `UI.teamModal(tid)` con i giocatori ruolo per ruolo, i bisogni e i conti.
 - **Draft:** proiezione che si muove ogni settimana (`prospectWeek`, `draftBoard`), notizie sui prospetti, schermata della serata del Draft (`UI.showDraft`), ogni squadra con la sua lista.
 - **Modi di spendere:** regali ai clienti (`GIFTS`), camp con leggende (`CAMPS`, rispettano il potenziale), staff e sede, accademia (serve reputazione 45), centro di allenamento, staff personale, campagne d'immagine, prestiti con rata ad ammortamento, quote delle squadre fino al 100%, fondazione.
 - **Pareri e statistiche:** `FEEDBACK_URL` (in cima alla sezione "Pareri" di `game.js`), `track(evento)` per GoatCounter, `exportSave` / `copySaveCode` / `readSave` / `applyImport`.
