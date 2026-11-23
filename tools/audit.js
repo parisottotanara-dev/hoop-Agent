@@ -4,7 +4,7 @@ const SEASONS = +process.argv[2] || 50;
 (async () => {
   const b = await chromium.launch(); const pg = await b.newPage();
   const errs = []; pg.on('pageerror', e => errs.push(e.message + ' @ ' + (e.stack || '').split('\n')[1]));
-  await pg.goto('file:///home/user/agente-nba/index.html');
+  await pg.goto('file://' + require('path').resolve(__dirname, '..', 'index.html'));
   await pg.fill('#f-agent', 'T'); await pg.fill('#f-agency', 'Audit'); await pg.click('form button');
   await pg.waitForTimeout(500);
   await pg.evaluate(() => {
