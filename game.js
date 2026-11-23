@@ -1521,12 +1521,40 @@ function informerWeek() {
   addNews(`🕵️ Soffiata dell'informatore: ${esc(text)}`);
   UI.pendingToast = UI.pendingToast || [text, 'intel'];
 }
+// Le agenzie rivali corteggiano i prospetti migliori: ci provano sempre di più man mano che il Draft si avvicina
+const RIVAL_PITCH = ['gli ha regalato un orologio da 20.000 dollari', 'ha portato sua madre a cena in un ristorante stellato', 'gli ha promesso uno sponsor di scarpe prima ancora del Draft',
+  'si è presentato a ogni sua partita in prima fila', 'ha assunto suo cugino come autista', 'gli ha fatto visitare la sede con l\'elicottero'];
+function rivalCourtWeek() {
+  if (!['fa', 'reg', 'po'].includes(S.phase)) return;
+  const free = draftBoard().slice(0, 30).map((p, i) => [p, i]).filter(([p]) => !p.agency && !isClient(p) && p.rivalDeadline == null);
+  if (!free.length) return;
+  const heat = S.phase === 'fa' ? 0.15 : S.phase === 'reg' ? 0.2 + S.week / REG_WEEKS * 0.3 : 0.6;
+  const n = (chance(heat) ? 1 : 0) + (chance(heat * 0.3) ? 1 : 0);
+  for (let k = 0; k < n && free.length; k++) {
+    // i primi della lista attirano più agenti
+    let r = Math.random() * free.reduce((s, [, i]) => s + 1 / (i + 3), 0), j = 0;
+    for (; j < free.length - 1; j++) { r -= 1 / (free[j][1] + 3); if (r <= 0) break; }
+    const [p, i] = free.splice(j, 1)[0];
+    const weeks = randi(2, 4);
+    p.rivalDeadline = S.turn + weeks; p.rivalWho = pick(RIVALS);
+    const mine = (p.bond || 0) > 0 || S.talks[p.id];
+    addNews(`🦈 ${esc(p.rivalWho)} corteggia <b>${esc(p.name)}</b> (${esc(p.school)}, oggi #${i + 1} al Draft): ${pick(RIVAL_PITCH)}. Se non ti muovi, tra ${weeks} settimane firma con loro.`, mine ? 'bad' : '');
+    if (mine || i < 10) UI.pendingToast = UI.pendingToast || [`${p.rivalWho} vuole ${p.name}: hai ${weeks} settimane per convincerlo.`, 'warn', 'Concorrenza!'];
+  }
+}
 function rivalDeadlines() {
   for (const p of Object.values(S.players)) {
     if (p.rivalDeadline == null || S.turn < p.rivalDeadline) continue;
-    if (!isClient(p) && !p.agency && p.school && (p.bond || 0) < 60) {
-      p.agency = p.rivalWho;
-      addNews(`🦈 ${esc(p.rivalWho)} ha fatto firmare ${esc(p.name)} prima di te.`, 'bad');
+    if (!isClient(p) && !p.agency && p.school) {
+      // chi ti è legato resiste: con un legame forte non cede mai, con uno medio a volte dice di no
+      const b = p.bond || 0;
+      if (b < 60 && chance(0.85 - b / 100)) {
+        p.agency = p.rivalWho;
+        addNews(`🦈 ${esc(p.rivalWho)} ha fatto firmare ${esc(p.name)} prima di te.`, b > 0 ? 'bad' : '');
+      } else {
+        if (b > 0) p.bond = clamp(b + 5, 0, 100);
+        addNews(`💪 ${esc(p.name)} ha detto no a ${esc(p.rivalWho)}${b >= 30 ? ': aspetta te' : ''}.`, b >= 30 ? 'good' : '');
+      }
     }
     p.rivalDeadline = null;
   }
@@ -2030,6 +2058,7 @@ function advance() {
   if (S.phase === 'fa' || S.phase === 'reg') informerWeek();
   prospectWeek();
   rivalDeadlines();
+  rivalCourtWeek();
   if (!S.over) genWeeklyEvents();
 
   // bancarotta
@@ -3053,7 +3082,7 @@ const UI = {
       </div>
       ${full ? '<div class="note warn">Hai raggiunto il limite di clienti: amplia gli <b>Uffici</b> nella scheda Staff.</div>' : ''}
       ${pros ? this.intelBox() : ''}
-      <p class="small muted">${pros ? 'Le valutazioni dei prospetti sono stime (~). <b>🔭 Osserva</b> per vederli meglio (i tuoi scout possono seguirne ${SCOUT_MAX} a settimana, questa settimana ne restano ${scoutsLeft()}), <b>🤝 Coltiva</b> per creare un legame prima del Draft: chi ti è legato accetta più facilmente e a volte sceglie te da solo.' :
+      <p class="small muted">${pros ? 'Le valutazioni dei prospetti sono stime (~). <b>🔭 Osserva</b> per vederli meglio (i tuoi scout possono seguirne ${SCOUT_MAX} a settimana, questa settimana ne restano ${scoutsLeft()}), <b>🤝 Coltiva</b> per creare un legame prima del Draft: chi ti è legato accetta più facilmente e a volte sceglie te da solo. Occhio alle agenzie rivali: più si avvicina il Draft, più corteggiano i migliori, e solo un legame forte li tiene lontani.' :
         this.mkt === 'fa' ? 'I free agent firmati in Free Agency ricevono subito offerte dalle squadre.' : 'Strappare un giocatore a un\'agenzia rivale è più difficile.'}</p>
       ${groups.filter(g => g[2].length).map(([h, sub, g, cls]) => `
         <section class="mk-group">
