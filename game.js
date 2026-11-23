@@ -1342,6 +1342,144 @@ function tradePlayer(p, toContender, dest = null) {
 
 
 /* ================================================================== */
+/* Bisogni delle squadre e scambi                                      */
+/* ================================================================== */
+const POS_LIST = ['PG', 'SG', 'SF', 'PF', 'C'];
+const POS_ART = { PG: 'un play', SG: 'una guardia', SF: 'un\'ala piccola', PF: 'un\'ala grande', C: 'un centro' };
+const TRADE_DEADLINE = 14; // dopo questa settimana della stagione regolare il mercato degli scambi chiude
+const TRADE_EVAL = 8;      // settimane dopo cui le squadre giudicano lo scambio
+const tradeOpen = () => S.phase === 'fa' || (S.phase === 'reg' && S.week <= TRADE_DEADLINE);
+let NEEDS = null;
+// titolare e riserva di ogni ruolo (giocatori sani)
+function slotsAt(tid) {
+  const out = {};
+  for (const [pid, e] of depthChart(tid, true)) {
+    const o = out[e.pos] = out[e.pos] || {};
+    if (e.slot === 'start') o.s = S.players[pid]; else if (e.slot === 'bench') o.b = S.players[pid];
+  }
+  return out;
+}
+function needData() {
+  if (NEEDS && NEEDS.turn === S.turn && NEEDS.v === (S.tradeV || 0)) return NEEDS;
+  const sl = S.teams.map(t => slotsAt(t.id)), med = {};
+  for (const pos of POS_LIST) { const v = sl.map(x => x[pos] && x[pos].s ? x[pos].s.ovr : 60).sort((a, b) => a - b); med[pos] = v[15]; }
+  return NEEDS = { turn: S.turn, v: S.tradeV || 0, sl, med };
+}
+// in quali ruoli una squadra ha più bisogno: confronta titolare e riserva con il resto della lega
+function teamNeeds(tid) {
+  const { sl, med } = needData(), me = sl[tid];
+  return POS_LIST.map(pos => {
+    const s = me[pos] && me[pos].s ? me[pos].s.ovr : 52, b = me[pos] && me[pos].b ? me[pos].b.ovr : 50;
+    const gap = (med[pos] - s) + Math.max(0, med[pos] - 9 - b) * 0.35;
+    return { pos, gap, lvl: gap >= 5 ? 2 : gap >= 1.5 ? 1 : 0 };
+  }).sort((a, b) => b.gap - a.gap);
+}
+const needOf = (tid, pos) => teamNeeds(tid).find(n => n.pos === pos);
+// quanto un giocatore migliorerebbe quel ruolo (senza chi se ne va)
+function fitGain(tid, inP, outP) {
+  const me = needData().sl[tid][inP.pos] || {};
+  let s = me.s; if (outP && s && s.id === outP.id) s = me.b;
+  let cmp = s ? s.ovr : 52;
+  if (outP && outP.pos === inP.pos) cmp = Math.max(cmp, outP.ovr); // se se ne va uno dello stesso ruolo, il confronto è con lui
+  return inP.ovr - cmp;
+}
+function needBonus(tid, inP, outP) {
+  const g = fitGain(tid, inP, outP), n = needOf(tid, inP.pos);
+  return clamp(g * 0.3, -1, 4) + (g > -2 ? n.lvl : 0);
+}
+// valore di un giocatore per una squadra: talento, età, contratto
+function tradeVal(p) {
+  let v = p.ovr;
+  if (p.age <= 24) v += (p.pot - p.ovr) * 0.35;
+  if (p.age >= 31) v -= (p.age - 30) * 1.1;
+  return v - clamp((p.salary - marketValue(p)) / 4, -3, 5);
+}
+// un giocatore che entra in un roster deve rispettare il tetto salariale (o pareggiare gli stipendi)
+function tradeLegal(p, x, tid) {
+  if (!x) return rosterOf(tid).length < 15 && CAP - payroll(tid) >= p.salary;
+  const hi = Math.max(p.salary, x.salary), lo = Math.min(p.salary, x.salary);
+  if (hi <= lo * 1.25 + 2) return true;
+  const recv = p.salary > x.salary ? tid : p.team; // chi riceve lo stipendio più alto
+  return CAP - payroll(recv) >= hi - lo;
+}
+const teamYes = (d, tid) => stakeOf(tid) >= 100 ? 1 : 1 / (1 + Math.exp(-(d + (teamRel(tid) - 50) / 20) / 2.2));
+// probabilità che le due squadre accettino
+function tradeOdds(p, x, tid) {
+  const a = p.team;
+  const dB = tradeVal(p) + needBonus(tid, p, x) - (x ? tradeVal(x) : 64);
+  const dA = x ? tradeVal(x) + needBonus(a, x, p) - tradeVal(p) : 64 + clamp((p.salary - marketValue(p)) / 3, 0, 4) - tradeVal(p);
+  const pB = teamYes(dB, tid), pA = teamYes(dA, a);
+  return { pA, pB, c: clamp(pA * pB, 0.02, 0.92) };
+}
+function tradeCands(p, tid) {
+  const out = rosterOf(tid).filter(x => !isClient(x) && !x.injury && tradeLegal(p, x, tid))
+    .map(x => ({ x, ...tradeOdds(p, x, tid), g: fitGain(p.team, x, p) }))
+    .sort((u, v) => v.c - u.c || v.g - u.g).slice(0, 6);
+  if (tradeLegal(p, null, tid)) out.push({ x: null, ...tradeOdds(p, null, tid), g: 0 });
+  return out;
+}
+// premio di una squadra contenta: cresce con il livello del giocatore arrivato, ma resta contenuto
+const tradeFee = p => Math.round(clamp(Math.pow(Math.max(0, p.ovr - 60) / 25, 2) * 60000, 3000, 60000) / 1000) * 1000;
+const gsOf = p => p.pts + p.reb * 0.5 + p.ast * 0.7;
+function tradeBlock(p) {
+  if (!tradeOpen()) return S.phase === 'reg' ? `Il mercato degli scambi ha chiuso dopo la settimana ${TRADE_DEADLINE}. Riapre in estate.` : 'In questo momento le squadre non fanno scambi: riprovaci in Free Agency o a inizio stagione.';
+  if (p.tradeDone === S.season) return `${p.name} è già stato scambiato in questa stagione. Lascialo ambientare.`;
+  if (p.lastRec === S.turn) return `Hai già proposto ${p.name} a una squadra questa settimana.`;
+  return '';
+}
+function proposeTrade(pid, tid, xid) {
+  const p = P(pid), x = xid != null ? P(xid) : null, a = p.team, A = S.teams[a], B = S.teams[tid];
+  const why = tradeBlock(p); if (why) return { msg: why, type: 'warn' };
+  if (x && x.team !== tid) return { msg: 'Quel giocatore non è più lì.', type: 'warn' };
+  if (!tradeLegal(p, x, tid)) return { msg: 'Gli stipendi non tornano: con il tetto salariale questo scambio non si può fare.', type: 'warn' };
+  p.lastRec = S.turn;
+  const o = tradeOdds(p, x, tid);
+  if (!chance(o.pB)) { changeTeamRel(tid, -3); return { msg: `I ${B.name} hanno detto di no: ${x ? 'non vogliono rinunciare a ' + x.name : 'non sono interessati'}. Il rapporto con loro cala un po'.`, type: 'bad' }; }
+  if (!chance(o.pA)) { changeTeamRel(a, -2); return { msg: `I ${B.name} erano d'accordo, ma i ${A.name} hanno bloccato tutto: non vogliono perdere ${p.name}. Il rapporto con loro cala un po'.`, type: 'bad' }; }
+  // si fa: prima la foto della situazione, per giudicare lo scambio più avanti
+  const snap = q => q ? { gp: q.gp, gs: gsOf(q) } : null;
+  (S.trades = S.trades || []).push({ season: S.season, pid, xid: x ? x.id : null, a, b: tid, wk: 0,
+    rec: { a: [A.w, A.l], b: [B.w, B.l] }, sp: snap(p), sx: snap(x) });
+  const fit = teamFit(p, tid, p.salary)[0];
+  p.team = tid; if (x) x.team = a;
+  p.tradeDone = S.season; S.tradeV = (S.tradeV || 0) + 1;
+  p.morale = clamp(p.morale + 3 + Math.round(fit * 5), 0, 100);
+  changeTeamRel(tid, 2); changeTeamRel(a, 1);
+  addNews(`🔁 Scambio firmato grazie a te: <b>${esc(p.name)}</b> passa ai ${esc(B.name)}${x ? `, ${esc(x.name)} fa il viaggio opposto` : ''}. Tra qualche settimana le squadre tireranno le somme.`, 'good');
+  return { msg: `${p.name} ora gioca nei ${B.name}: ${roleTxt(p, tid)}.`, type: 'good' };
+}
+// dopo qualche settimana le squadre giudicano: chi ci ha guadagnato ti premia, chi ci ha perso se lo ricorda
+function tradeWeek(final = false) {
+  if (!S.trades || !S.trades.length) return;
+  const keep = [];
+  for (const T of S.trades) {
+    if (!final) T.wk++;
+    const p = S.players[T.pid], x = T.xid != null ? S.players[T.xid] : null;
+    const gp = p ? p.gp - T.sp.gp : 0;
+    if (!final && T.wk < TRADE_EVAL) { keep.push(T); continue; }
+    if (!p || p.retired || T.season !== S.season || gp < 4) continue; // troppo presto o non più valutabile
+    const perG = (q, s0) => q && s0 && q.gp - s0.gp > 0 ? (gsOf(q) - s0.gs) / (q.gp - s0.gp) : null;
+    const gp1 = perG(p, T.sp), gx = x ? perG(x, T.sx) : null;
+    const wp = (tid, r0) => { const t = S.teams[tid], w = t.w - r0[0], l = t.l - r0[1]; const before = r0[0] + r0[1] >= 8 ? r0[0] / (r0[0] + r0[1]) : 0.5; return (w + l ? w / (w + l) : 0.5) - before; };
+    const sB = ((gp1 || 0) - (gx ?? 6)) / 6 + wp(T.b, T.rec.b) * 5;
+    const sA = ((gx ?? 0) - (gp1 || 0)) / 6 + wp(T.a, T.rec.a) * 5 + (x ? 0 : 0.6);
+    for (const [tid, sc, got] of [[T.b, sB, p], [T.a, sA, x]]) {
+      const t = S.teams[tid];
+      if (sc > 0.4) {
+        const fee = got ? tradeFee(got) : 3000;
+        earn(fee); changeTeamRel(tid, 5); changeRep(0.3);
+        addNews(`🤝 I ${esc(t.name)} sono contenti dello scambio ${got ? 'per ' + esc(got.name) : 'di ' + esc(p.name)}: ti mandano un premio di ${fmt$(fee)} e ora si fidano di più di te.`, 'good');
+        UI.pendingToast = UI.pendingToast || [`I ${t.name} ti ringraziano per lo scambio: premio di ${fmt$(fee)}.`, 'good', 'Scambio riuscito!'];
+      } else if (sc < -0.4) {
+        changeTeamRel(tid, -5);
+        addNews(`😤 I ${esc(t.name)} sono delusi dallo scambio ${got ? 'per ' + esc(got.name) : 'di ' + esc(p.name)}: il rapporto con loro peggiora.`, 'bad');
+      }
+    }
+  }
+  S.trades = final ? [] : keep;
+}
+
+/* ================================================================== */
 /* Informatore e legame con i prospetti del prossimo Draft             */
 /* ================================================================== */
 const INFORMER_LV = ['Non assunto', 'Scarso', 'Discreto', 'Buono', 'Ottimo', 'Leggendario'];
@@ -1481,15 +1619,15 @@ function recChance(p, tid) {
     const gap = draftSlot(tid) - (draftProjection(p) || 60);
     if (gap < 0) c -= Math.min(0.4, -gap * 0.03);
   } else if (p.team != null) c *= p.years > 1 ? 1 : 1.3;
+  c += needOf(tid, p.pos).lvl * 0.06;
   return clamp(c, 0.03, 0.9);
 }
 function recommend(pid, tid) {
   const p = P(pid), t = S.teams[tid];
   if (p.lastRec === S.turn) return { msg: `Hai già parlato di ${p.name} con una squadra questa settimana.`, type: 'warn' };
   if (p.team === tid) return { msg: `${p.name} gioca già nei ${t.name}.`, type: 'warn' };
-  // uno scambio non si chiede ogni settimana: per chi ha già una squadra, una richiesta a stagione
-  if (p.team != null && !p.school && p.tradeAsk === S.season) return { msg: `Hai già chiesto uno scambio per ${p.name} in questa stagione. Le squadre non vogliono sentirne parlare di nuovo.`, type: 'warn' };
-  if (p.team != null && !p.school) p.tradeAsk = S.season;
+  // per chi ha già una squadra si propone uno scambio (i bot scelgono la contropartita migliore)
+  if (p.team != null && !p.school) { const c = tradeCands(p, tid)[0]; return c ? proposeTrade(pid, tid, c.x ? c.x.id : null) : { msg: 'Nessuno scambio possibile con quella squadra.', type: 'warn' }; }
   p.lastRec = S.turn;
   const ok = chance(recChance(p, tid));
   if (!ok) {
@@ -1507,10 +1645,6 @@ function recommend(pid, tid) {
     makeOffersFor(p, 1, tid, false);
     return { msg: `I ${t.name} gli hanno fatto un'offerta: la trovi nelle trattative.`, type: 'good' };
   }
-  const to = tradePlayer(p, false, tid);
-  p.morale = clamp(p.morale + 6, 0, 100);
-  addNews(`🔁 Grazie a te ${esc(p.name)} passa ai ${esc(teamName(to))}.`, 'good');
-  return { msg: `Scambio fatto: ${p.name} ora gioca nei ${to.name}.`, type: 'good' };
 }
 
 /* ================================================================== */
@@ -1867,8 +2001,10 @@ function advance() {
     }
     if (S.week === 10) allStar();
     if (S.week === 12) extensionOffers();
+    tradeWeek();
+    if (S.week === TRADE_DEADLINE) addNews('⏰ Chiude il mercato degli scambi: fino all\'estate le rose restano queste.');
     if (chance(0.25)) randomLeagueNews();
-    if (S.week >= REG_WEEKS) { recSeason(); checkPromises(); S.phase = 'po'; S.week = 1; poInit(); addNews('🏆 Stagione regolare finita: si va ai playoff! Le prime sei di ogni conference sono dentro, dalla settima alla decima passano dal play-in.', 'gold'); }
+    if (S.week >= REG_WEEKS) { tradeWeek(true); recSeason(); checkPromises(); S.phase = 'po'; S.week = 1; poInit(); addNews('🏆 Stagione regolare finita: si va ai playoff! Le prime sei di ogni conference sono dentro, dalla settima alla decima passano dal play-in.', 'gold'); }
     else S.week++;
   } else if (S.phase === 'po') {
     if (!S.po || S.po.season !== seasonLabel() || S.po.champ == null) poSimAll();
@@ -2107,8 +2243,9 @@ function poSeriesEnd(s, G) {
   const w = S.teams[s.w], l = S.teams[poLoser(s)];
   const score = s.bo === 1 ? `${Math.max(G.hs, G.as)}-${Math.min(G.hs, G.as)}` : `${Math.max(s.wa, s.wb)}-${Math.min(s.wa, s.wb)}`;
   G.result = s.bo === 1 ? `${teamName(w)} battono ${teamName(l)} ${score}` : `${teamName(w)} vincono la serie ${score}${s.g.length === 7 ? ' a gara 7' : ''}`;
+  if (s.round >= 2 && clients().some(p => p.team === s.w)) changeRep(0.25); // una volta per serie, non per ogni cliente
   for (const p of clients()) {
-    if (p.team === s.w) { p.morale = clamp(p.morale + 3, 0, 100); if (s.round >= 2) changeRep(0.4); }
+    if (p.team === s.w) p.morale = clamp(p.morale + 3, 0, 100);
     if (p.team === poLoser(s) && s.round >= 2) addNews(`🏀 Finisce la stagione di <b>${esc(p.name)}</b>: i ${esc(teamName(l))} escono ${s.round === 5 ? 'in finale' : 'al ' + PO_ROUNDS[s.round].toLowerCase()} (${score}).`);
   }
   if (s.round >= 3 || s.g.length === 7) addNews(`🏆 ${PO_ROUNDS[s.round]}: i ${esc(G.result)}.`, s.round === 5 ? 'gold' : '');
@@ -2849,7 +2986,7 @@ const UI = {
         ${offers ? `<button class="btn primary sm" onclick="UI.negotiation(${p.id})">Offerte (${offers})</button>` : ''}
         <button class="btn sm" onclick="UI.giftModal(${p.id})" ${p.lastContact === S.turn ? 'disabled' : ''}>${ic('heart')} Regalo</button>
         <button class="btn sm" onclick="UI.careModal(${p.id})">${ic('star')} Cura e immagine</button>
-        <button class="btn sm" onclick="UI.recModal(${p.id})">${ic('megaphone')} Consiglia</button>
+        <button class="btn sm" onclick="UI.recModal(${p.id})">${ic(p.team != null && !p.school ? 'swap' : 'megaphone')} ${p.team != null && !p.school ? 'Scambio' : 'Consiglia'}</button>
         <button class="btn sm" onclick="UI.campModal(${p.id})" ${p.campSeason === S.season ? 'disabled' : ''}>${ic('dumbbell')} Camp</button>
         ${!p.school && p.ovr >= 62 ? `<button class="btn sm" onclick="UI.doSponsor(${p.id})" ${S.turn - (p.lastSponsorTry ?? -99) < 4 || p.sponsors.length >= 4 ? 'disabled' : ''} title="$10k · ${Math.round(sponsorChance(p) * 100)}%">💼 Cerca sponsor</button>` : ''}
         <button class="btn sm" onclick="UI.player(${p.id})">Scheda</button>
@@ -3083,18 +3220,20 @@ const UI = {
   /* ---------- Consiglia a una squadra ---------- */
   recModal(pid) {
     const p = P(pid);
+    if (p.team != null && !p.school) return this.tradeModal(pid);
     const teams = S.teams.filter(t => t.id !== p.team).map(t => ({ t, c: recChance(p, t.id), slot: draftSlot(t.id), rel: teamRel(t.id) }));
-    teams.sort((a, b) => b.c - a.c || a.slot - b.slot);
+    teams.forEach(x => x.need = needOf(x.t.id, p.pos).lvl);
+    teams.sort((a, b) => b.c - a.c || b.need - a.need || a.slot - b.slot);
     const done = p.lastRec === S.turn;
     const intro = p.school
       ? `Consiglia ${esc(p.name)} a una squadra: se ti ascoltano, lo sceglieranno al Draft se è ancora libero al loro turno, e sale nelle classifiche. Oggi è proiettato alla <b>#${draftProjection(p)}</b>.`
       : p.team == null ? `Consiglia ${esc(p.name)} a una squadra: se ti ascoltano, gli fanno un'offerta.`
         : `Proponi ${esc(p.name)} a un'altra squadra: se ti ascoltano, organizzano uno scambio.`;
     this.openModal(`<h3>${ic('megaphone')} Consiglia ${esc(p.name)}</h3><p class="small">${intro}</p>
-      <p class="small muted">Più è buono il tuo rapporto con la squadra, più ti danno retta. Se non ti ascoltano, il rapporto cala un po'. Puoi parlarne con una squadra a settimana.</p>
+      <p class="small muted">Accanto a ogni squadra vedi i ruoli in cui ha più bisogno: se cerca proprio ${POS_ART[p.pos]}, ti ascolta più volentieri. Più è buono il tuo rapporto con la squadra, più ti danno retta. Se non ti ascoltano, il rapporto cala un po'. Puoi parlarne con una squadra a settimana.</p>
       ${done ? '<p class="warn">Ne hai già parlato con una squadra questa settimana.</p>' : ''}
       <div class="rec-list">${teams.map(({ t, c, slot, rel }) => `<div class="rec">
-        <span class="rec-t"><b>${esc(teamName(t))}</b><small>${p.school ? `scelta #${slot} · ` : ''}rapporto ${relLabel(rel)}</small></span>
+        <span class="rec-t"><b>${esc(teamName(t))}</b><span class="needs">${needChips(t.id, p.pos)}</span><small>${p.school ? `scelta #${slot} · ` : ''}rapporto ${relLabel(rel)}</small></span>
         <span class="rec-c ${c > .6 ? 'good' : c > .3 ? 'warn' : 'bad'}">${Math.round(c * 100)}%</span>
         <button class="btn sm primary" onclick="UI.doRecommend(${pid}, ${t.id})" ${done ? 'disabled' : ''}>Consiglia</button></div>`).join('')}</div>`);
   },
@@ -3202,7 +3341,7 @@ const UI = {
       <div class="actions">
         ${mine ? `<button class="btn sm" onclick="UI.giftModal(${p.id})" ${p.lastContact === S.turn ? 'disabled' : ''}>${ic('heart')} Regalo</button>
         <button class="btn sm" onclick="UI.careModal(${p.id})">${ic('star')} Cura e immagine</button>
-          <button class="btn sm" onclick="UI.recModal(${p.id})">${ic('megaphone')} Consiglia a una squadra</button>
+          <button class="btn sm" onclick="UI.recModal(${p.id})">${p.team != null && !p.school ? ic('swap') + ' Proponi uno scambio' : ic('megaphone') + ' Consiglia a una squadra'}</button>
           <button class="btn sm" onclick="UI.campModal(${p.id})" ${p.campSeason === S.season ? 'disabled' : ''}>${ic('dumbbell')} Camp con una leggenda</button>
           <button class="btn bad sm" onclick="UI.release(${p.id})">Interrompi rapporto</button>`
           : `<button class="btn primary sm" onclick="UI.pitchModal(${p.id})">${S.talks[p.id] ? 'Riprendi la trattativa' : 'Proponi agenzia'}</button>
@@ -3657,6 +3796,49 @@ Object.assign(UI, {
   },
 });
 
+/* ---------- Scambi ---------- */
+const needChips = (tid, hl) => {
+  const n = teamNeeds(tid).filter(x => x.lvl);
+  return n.length ? n.map(x => `<span class="need l${x.lvl} ${x.pos === hl ? 'hl' : ''}">${POS_NAME[x.pos]}</span>`).join('') : '<span class="need l0">rosa completa</span>';
+};
+Object.assign(UI, {
+  tradeModal(pid, tid = null) {
+    const p = P(pid), why = tradeBlock(p);
+    const head = `<div class="tk-head">${avatarSVG(p, 56)}<div><h3>Scambio per ${esc(p.name)}</h3><p class="muted small">${POS_NAME[p.pos]} · ${p.age} anni · OVR ${p.ovr} · ${fmtM(p.salary)} per ${p.years} ann${p.years > 1 ? 'i' : 'o'} · ${esc(teamOf(p).name)}</p></div></div>`;
+    if (tid == null) {
+      const rows = S.teams.filter(t => t.id !== p.team).map(t => {
+        const n = needOf(t.id, p.pos), best = tradeCands(p, t.id)[0];
+        return { t, n, c: best ? best.c : 0, role: roleLabel(depthChart(t.id, true, p).get(p.id), p) };
+      }).sort((x, y) => y.n.lvl - x.n.lvl || y.c - x.c);
+      return this.openModal(`${head}
+        <p class="small">Scegli la squadra a cui proporlo. Accanto vedi i ruoli in cui hanno più bisogno: se cercano proprio ${POS_ART[p.pos]}, ti ascoltano più volentieri.</p>
+        <p class="small muted">Dopo ${TRADE_EVAL} settimane le due squadre giudicano lo scambio. Chi ci ha guadagnato ti manda un premio (fino a ${fmt$(tradeFee(p))} per un giocatore come lui) e si fida di più di te; chi ci ha perso se lo ricorda. Se dicono di no, il rapporto cala un po'.</p>
+        ${why ? `<p class="warn">${esc(why)}</p>` : ''}
+        <div class="tr-list">${rows.map(({ t, c, role }) => `<div class="rec tr-team">
+          <span class="rec-t"><b>${esc(teamName(t))}</b><span class="needs">${needChips(t.id, p.pos)}</span><small>Da loro sarebbe: ${role} · rapporto ${relLabel(teamRel(t.id))}</small></span>
+          <span class="rec-c ${c > .5 ? 'good' : c > .25 ? 'warn' : 'bad'}">${c ? Math.round(c * 100) + '%' : '-'}</span>
+          <button class="btn sm primary" onclick="UI.tradeModal(${pid}, ${t.id})" ${why || !c ? 'disabled' : ''}>Scegli</button></div>`).join('')}</div>`);
+    }
+    const t = S.teams[tid], fit = teamFit(p, tid, p.salary), cands = tradeCands(p, tid);
+    const A = teamOf(p);
+    this.openModal(`${head}
+      <p class="small"><b>${esc(teamName(t))}</b> · cercano: ${needChips(tid, p.pos)}</p>
+      <p class="small">Da loro sarebbe <b>${roleTxt(p, tid)}</b>. ${prefOf(p) === 'minuti' ? `Lui vuole giocare tanto, e ${fit[0] > 0.2 ? 'qui lo farebbe' : fit[0] < -0.2 ? 'qui giocherebbe poco' : 'qui avrebbe il suo spazio'}` : `A lui ${fit[0] > 0.2 ? 'piace' : fit[0] < -0.2 ? 'non piace' : 'va bene'}: ${esc(fit[1])}`}.</p>
+      <p class="small muted">Scegli chi chiedere in cambio. I ${esc(A.name)} cercano: ${needChips(A.id)}</p>
+      ${why ? `<p class="warn">${esc(why)}</p>` : ''}
+      <div class="tr-list">${cands.length ? cands.map(({ x, c, pA, pB }) => `<div class="rec tr-c">
+        ${x ? avatarSVG(x, 36) : `<span class="tr-none">${ic('swap')}</span>`}
+        <span class="rec-t">${x ? `<b>${esc(x.name)}</b><small>${POS_NAME[x.pos]} · ${x.age} anni · OVR ${x.ovr} · ${fmtM(x.salary)} (${x.years}a)</small><small>Ai ${esc(A.name)} sarebbe: ${roleLabel(depthChart(A.id, true, x).get(x.id), x)}</small>`
+          : `<b>Nessuno in cambio</b><small>Hanno spazio salariale per prenderlo e basta</small>`}
+          <small>Sì dei ${esc(t.abbr)} ${Math.round(pB * 100)}% · sì dei ${esc(A.abbr)} ${Math.round(pA * 100)}%</small></span>
+        <span class="rec-c ${c > .5 ? 'good' : c > .25 ? 'warn' : 'bad'}">${Math.round(c * 100)}%</span>
+        <button class="btn sm primary" onclick="UI.doTrade(${pid}, ${tid}, ${x ? x.id : 'null'})" ${why ? 'disabled' : ''}>Proponi</button></div>`).join('')
+        : '<p class="muted small">Con gli stipendi che hanno, nessuno scambio è possibile.</p>'}</div>
+      <div class="actions"><button class="btn" onclick="UI.tradeModal(${pid})">‹ Altre squadre</button></div>`);
+  },
+  doTrade(pid, tid, xid) { const r = proposeTrade(pid, tid, xid); save(); this.closeModal(); this.render(); toast(r.msg, r.type, r.type === 'good' ? 'Scambio fatto!' : r.type === 'bad' ? 'Niente da fare' : undefined); },
+});
+
 const Tutorial = {
   i: 0, el: null,
   steps: [
@@ -3670,7 +3852,7 @@ const Tutorial = {
     { t: 't-chal', h: 'Sfide della stagione', x: 'Ogni stagione arrivano 3 sfide nuove, sempre un po\' più difficili, con un premio in soldi e reputazione. Gli <b>obiettivi</b> qui sotto invece sono traguardi di carriera, una volta sola.' },
     { t: null, h: 'Il carattere', x: 'Ogni giocatore ha il suo carattere e la sua storia, e il carattere si vede in quello che combina: un 🎉 <b>festaiolo</b> può fare serata prima di una partita, un 😤 <b>aggressivo</b> finire in una rissa, un 💛 <b>gentile</b> fare beneficenza. Conta anche negli affari: un leale è difficile da portarti via, uno attaccato ai soldi chiede di più.' },
     { t: null, h: 'I rapporti', x: 'Giocatori, squadre e sponsor si ricordano di te. Se li tratti bene accettano più volentieri le tue richieste, pagano di più e hanno più pazienza nelle trattative. Se tiri troppo la corda… si chiudono le porte. Trovi i rapporti nelle schede dei clienti e nella scheda Lega.' },
-    { t: 'tab-clients', h: 'Clienti', x: 'Le schede complete dei tuoi assistiti. Quando una squadra fa un\'offerta compare il pulsante <b>Offerte</b>: tratti stipendio e anni, guardi cosa preferisce il giocatore e puoi giocare la carta dell\'<b>asta</b> (occhio ai bluff). Le offerte scadono! Fagli un <b>Regalo</b> per tenerli contenti, <b>Camp</b> per farli allenare con una leggenda, <b>Cura e immagine</b> per dargli uno staff personale o lanciare una campagna, e <b>Consiglia</b> per proporli a una squadra: un\'offerta per chi è senza contratto, uno scambio per chi ce l\'ha.' },
+    { t: 'tab-clients', h: 'Clienti', x: 'Le schede complete dei tuoi assistiti. Quando una squadra fa un\'offerta compare il pulsante <b>Offerte</b>: tratti stipendio e anni, guardi cosa preferisce il giocatore e puoi giocare la carta dell\'<b>asta</b> (occhio ai bluff). Le offerte scadono! Fagli un <b>Regalo</b> per tenerli contenti, <b>Camp</b> per farli allenare con una leggenda, <b>Cura e immagine</b> per dargli uno staff personale o lanciare una campagna, e <b>Consiglia</b> per proporli a una squadra che cerca proprio il loro ruolo. Per chi ha già un contratto c\'è <b>Scambio</b>: scegli la squadra e chi chiedere in cambio. Se lo scambio funziona, le squadre ti premiano.' },
     { t: 'tab-market', h: 'Mercato', x: 'Qui trovi nuovi clienti: <b>prospetti</b> del college, <b>free agent</b> e giocatori di altre agenzie. Con <b>🔭 Osserva</b> scopri il loro potenziale, con <b>🤝 Coltiva</b> crei un legame prima del Draft. <b>Proponi</b> chiede un incontro: se accetta inizia una vera trattativa. Tu offri commissione, bonus e <b>promesse</b> da mantenere; lui fa una controfferta e ha una pazienza di 2-5 🏀.' },
     { t: null, h: 'Il Draft', x: 'Puoi <b>consigliare</b> un prospetto a una squadra: se ti danno retta, lo sceglieranno al Draft se è ancora libero al loro turno. Più è buono il rapporto con la squadra, più ti ascoltano. E un ragazzo a cui sei molto legato può sceglierti come agente da solo, prima del Draft.' },
     { t: 'tab-league', h: 'Lega', x: 'Le classifiche di Est e Ovest, il power ranking con il tuo rapporto con ogni squadra, gli sponsor, i migliori giocatori e i record. In ogni conference le prime 6 vanno ai playoff, dalla 7ª alla 10ª passano dal play-in. I playoff li puoi guardare partita per partita.' },

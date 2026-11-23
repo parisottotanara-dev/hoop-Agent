@@ -37,7 +37,7 @@ Claude Code legge questo file da solo all'inizio di ogni sessione su questo prog
 **Ordine degli script** in `index.html` e in `tools/build_artifact.py`: names, nations, events, events_extra, traits, tuning, records_data, art, game. Se aggiungi un file JS, mettilo in tutti e due i posti e anche nella lista `APP` di `sw.js`.
 
 ## Regole da rispettare sempre
-1. **Ad ogni rilascio** cambia il numero di `CACHE` in `sw.js` (ora `hoop-agent-v32`), così i telefoni scaricano la versione nuova.
+1. **Ad ogni rilascio** cambia il numero di `CACHE` in `sw.js` (ora `hoop-agent-v33`), così i telefoni scaricano la versione nuova.
 2. **I salvataggi vecchi devono continuare a funzionare.**
    - Lo stato è l'oggetto globale `S`, salvato in localStorage con la chiave `SAVE_KEY = 'superAgenteNBA.save.v2'`. Non cambiare la chiave.
    - Ogni campo nuovo va gestito anche quando manca, nella riga `if (S) { ... }` in fondo a `game.js` e/o con valori predefiniti (`|| 0`).
@@ -61,6 +61,7 @@ Servono Node e Playwright (`require('playwright')`). Ogni script si lancia da so
 - `tools/test_tutorial.js`: ogni passo del tutorial deve indicare qualcosa di visibile, senza che il fumetto lo copra.
 - `tools/test_overflow.js`: nessuna schermata deve uscire dai bordi.
 - `tools/test_save.js`: esporta e reimporta il salvataggio.
+- `tools/test_trade.js`: lista delle squadre con i bisogni, proposta di scambio, rose aggiornate e giudizio dopo 8 settimane.
 - `tools/test_playoff.js`: tabellone, partita in diretta (il risultato della telecronaca deve tornare con il tabellino), simulazioni e campioni.
 - `tools/audit.js 50`: simula 50 stagioni e controlla che la lega resti sana (stipendi, rose, talento, promesse mantenibili). **Da lanciare dopo ogni cambio di bilanciamento.**
 - `tools/exploit.js 12 [strategia]`: 11 bot con strategie diverse (camp, accademia, prestiti, bluff, avidità, investimenti, spendaccione…) cercano meccaniche troppo forti. I risultati cambiano molto da una partita all'altra: guarda le tendenze, non il singolo numero.
@@ -71,6 +72,7 @@ Servono Node e Playwright (`require('playwright')`). Ogni script si lancia da so
 - **Playoff:** sono l'evento finale e si giocano nella loro schermata (`UI.openPlayoffs`). Play-in (7ª-10ª), poi serie al meglio delle 7 con fattore campo. Lo stato sta in `S.po` (serie, teste di serie, statistiche, campioni, MVP delle Finali). Si può guardare una partita in diretta con telecronaca (`UI.poWatch`, `playByPlay`), simulare la giornata, il turno o saltare fino al campione (`UI.poSim`). Gare 7 evidenziate, record dei playoff in `S.records.po` (`poRecGame`). Premi e reputazione a fine playoff in `poFinish`. Nei test e nei bot `UI.autoPo = true` fa simulare i playoff senza schermata.
 - **Soldi:** le commissioni sugli stipendi arrivano solo in stagione regolare (`weeklyIncomeIn(phase)`); gli sponsor arrivano tutto l'anno. In Home si mostra quanto entra questa settimana.
 - **Trattative con i giocatori:** incontro (`openChance`, `startTalk`, con l'opzione incontro di lusso `luxChance`), commissione dal 2 al 4%, bonus alla firma (quello in eccesso compensa fino a mezzo punto di commissione), promesse da mantenere.
+- **Bisogni e scambi:** `teamNeeds(tid)` dice in quali ruoli una squadra ha più bisogno (confronto di titolare e riserva con il resto della lega); si vede quando consigli un giocatore. Per i clienti sotto contratto c'è lo scambio (`UI.tradeModal`, `tradeCands`, `tradeOdds`, `proposeTrade`): scegli squadra e contropartita, devono dire sì tutte e due, con tetto salariale rispettato. Mercato aperto in Free Agency e fino alla settimana 14. Uno scambio riuscito a stagione per giocatore. Dopo 8 settimane `tradeWeek` giudica: la squadra che ci ha guadagnato paga un premio (`tradeFee`, max 60k) e il rapporto sale; quella che ci ha perso abbassa il rapporto.
 - **Trattative con le squadre:** forbice di valore, preferenze del giocatore, scadenze, asta e bluff, salary cap e apron.
 - **Ruoli e minuti:** gerarchie per ruolo (`depthChart`): titolare, riserva, terzo. Le riserve forti giocano anche nel ruolo vicino, e gli infortuni fanno salire il sostituto dello stesso ruolo.
 - **Carriera:** potenziale legato all'età (`potRoom`, `capPot`), crescita e declino (`developPlayer`), infortuni (`injuryHit`, `careFactor`).
