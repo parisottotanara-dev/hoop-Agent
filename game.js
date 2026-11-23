@@ -529,6 +529,7 @@ function simWeekGames() {
       const base = randi(98, 116), diff = randi(1, 18);
       const sa = win ? base + diff : base, sb = win ? base : base + diff;
       if (win) { S.teams[ai].w++; S.teams[b].l++; } else { S.teams[b].w++; S.teams[ai].l++; }
+      for (const [id, v] of [[ai, win], [b, !win]]) { const t = S.teams[id]; (t.last = t.last || []).push(v ? 1 : 0); if (t.last.length > 10) t.last.shift(); }
       res[ai] = { opp: b, home: true, win, us: sa, them: sb };
       res[b] = { opp: ai, home: false, win: !win, us: sb, them: sa };
     }
@@ -1532,7 +1533,7 @@ function teamFit(p, tid, salary) {
     // a inizio stagione la classifica non dice niente: conta la forza della rosa
     const early = t.w + t.l < 8;
     const k = early ? [...S.teams].sort((a, b) => teamStrength(b.id) - teamStrength(a.id)).findIndex(x => x.id === tid) + 1 : teamRank(tid);
-    return [k <= 8 ? 1 : k <= 16 ? 0.3 : k <= 22 ? -0.4 : -1, early ? `${k}ª rosa più forte della lega` : `squadra ${k}ª in classifica`];
+    return [k <= 8 ? 1 : k <= 16 ? 0.3 : k <= 22 ? -0.4 : -1, early ? `${k}ª rosa più forte della lega` : `squadra ${k}ª della lega`];
   }
   if (pr === 'citta') return [t.market >= 0.75 ? 1 : t.market >= 0.5 ? 0.3 : t.market >= 0.3 ? -0.4 : -1, t.market >= 0.75 ? 'grande città' : t.market >= 0.5 ? 'città media' : 'città piccola'];
   const e = depthChart(tid, false, p.team === tid ? null : p).get(p.id) || { slot: 'deep', min: 0 };
@@ -1691,7 +1692,7 @@ function promiseStatus(p, pr) {
   const t = teamOf(p);
   if (pr.k === 'sponsor') return (p.sponsorCount || 0) > pr.base ? '✅' : '<i class="dot warn"></i>';
   if (pr.k === 'camp') return p.campSeason === pr.season ? '✅' : '<i class="dot warn"></i>';
-  return t && teamRank(t.id) <= 16 ? '<i class="dot good"></i>' : '⚠️';
+  return t && confRank(t.id) <= 8 ? '<i class="dot good"></i>' : '⚠️';
 }
 function checkPromises() {
   for (const p of clients()) {
@@ -1700,7 +1701,7 @@ function checkPromises() {
     for (const pr of p.promises) {
       if (pr.season > S.season) { keep.push(pr); continue; }
       const t = teamOf(p);
-      const ok = pr.k === 'sponsor' ? (p.sponsorCount || 0) > pr.base : pr.k === 'contender' ? !!t && teamRank(t.id) <= 16 : p.campSeason === pr.season;
+      const ok = pr.k === 'sponsor' ? (p.sponsorCount || 0) > pr.base : pr.k === 'contender' ? !!t && confRank(t.id) <= 8 : p.campSeason === pr.season;
       if (ok) { p.morale = clamp(p.morale + 10, 0, 100); changeRep(0.5); addNews(`🤝 Promessa mantenuta con ${esc(p.name)}: ${esc(PROMISES[pr.k].label.toLowerCase())}.`, 'good'); }
       else { p.morale = clamp(p.morale - 25, 0, 100); changeRep(-1); addNews(`💔 Promessa mancata con ${esc(p.name)}: ${esc(PROMISES[pr.k].label.toLowerCase())}. Si fida meno di te.`, 'bad'); }
     }
@@ -1827,6 +1828,8 @@ function advance() {
     toast(`Hai ${S.inbox.length === 1 ? 'un imprevisto' : S.inbox.length + ' imprevisti'} da risolvere prima di andare avanti.`, 'warn', 'Prima decidi!');
     return;
   }
+  // i playoff si giocano nella loro schermata; si va avanti solo a campione deciso
+  if (S.phase === 'po' && !UI.autoPo && !(S.po && S.po.season === seasonLabel() && S.po.champ != null)) return UI.openPlayoffs();
   S.turn++;
   UI.advancing = true; UI.goalQueue = [];
   expireOffers();
@@ -1848,6 +1851,7 @@ function advance() {
       addNews(`🏀 Inizia la stagione regolare ${seasonLabel()}!`, 'gold');
     } else { S.week++; makeOffersForClientFAs(); }
   } else if (S.phase === 'reg') {
+    powerSnapshot();
     simWeekGames(); played = true;
     for (const p of clients()) if (p.team != null) earn(p.salary * 1e6 * p.comm / 100 / REG_WEEKS);
     for (const p of Object.values(S.players)) {
@@ -1864,10 +1868,11 @@ function advance() {
     if (S.week === 10) allStar();
     if (S.week === 12) extensionOffers();
     if (chance(0.25)) randomLeagueNews();
-    if (S.week >= REG_WEEKS) { recSeason(); checkPromises(); S.phase = 'po'; S.week = 1; addNews('🏆 Stagione regolare finita: si va ai playoff!', 'gold'); }
+    if (S.week >= REG_WEEKS) { recSeason(); checkPromises(); S.phase = 'po'; S.week = 1; poInit(); addNews('🏆 Stagione regolare finita: si va ai playoff! Le prime sei di ogni conference sono dentro, dalla settima alla decima passano dal play-in.', 'gold'); }
     else S.week++;
   } else if (S.phase === 'po') {
-    playoffs();
+    if (!S.po || S.po.season !== seasonLabel() || S.po.champ == null) poSimAll();
+    poFinish();
     S.phase = 'draft'; S.week = 1;
   } else if (S.phase === 'draft') {
     bondedJoin();
@@ -1935,29 +1940,239 @@ function randomLeagueNews() {
   addNews(`🔁 Mercato: ${esc(p.name)} (${p.ovr}) passa ai ${esc(teamName(to))}.`);
 }
 
-function playoffs() {
-  const seeds = standings().slice(0, 16);
-  const str = {}; seeds.forEach(t => str[t.id] = teamStrength(t.id));
-  let round = seeds.map(t => t.id);
-  const names = ['Primo turno', 'Semifinali di conference', 'Finali di conference', 'Finali'];
-  const playoffTeams = new Set(round);
-  chalUpdate('playoff', clients().filter(p => playoffTeams.has(p.team)).length, 'set');
-  let r = 0, finalTxt = '';
-  while (round.length > 1) {
-    const next = [];
-    for (let i = 0; i < round.length / 2; i++) {
-      const a = round[i], b = round[round.length - 1 - i];
-      let wa = 0, wb = 0;
-      while (wa < 4 && wb < 4) chance(winProb(str[a] + 0.8, str[b])) ? wa++ : wb++;
-      const w = wa === 4 ? a : b;
-      next.push(w);
-      if (round.length === 2) finalTxt = `${teamName(S.teams[w])} battono ${teamName(S.teams[w === a ? b : a])} ${Math.max(wa, wb)}-${Math.min(wa, wb)}`;
-    }
-    round = next; r++;
+/* ================================================================== */
+/* Conference, power ranking e playoff                                 */
+/* ================================================================== */
+const EAST = new Set(['ATL', 'BOS', 'BKN', 'CHA', 'CHI', 'CLE', 'DET', 'IND', 'MIA', 'MIL', 'NYK', 'ORL', 'PHI', 'TOR', 'WAS']);
+const confOf = t => EAST.has(t.abbr) ? 'E' : 'W';
+const CONF_NAME = { E: 'Est', W: 'Ovest' };
+const confStandings = c => standings().filter(t => confOf(t) === c);
+const confRank = tid => confStandings(confOf(S.teams[tid])).findIndex(x => x.id === tid) + 1;
+// partite di distanza dalla prima della conference
+const gamesBehind = (t, lead) => ((lead.w - t.w) + (t.l - lead.l)) / 2;
+const last10 = t => { const l = (t.last || []).slice(-10); return l.length ? `${l.filter(x => x).length}-${l.filter(x => !x).length}` : '-'; };
+function streakTxt(t) {
+  const l = t.last || []; if (!l.length) return '-';
+  const v = l[l.length - 1]; let n = 0;
+  for (let i = l.length - 1; i >= 0 && l[i] === v; i--) n++;
+  return (v ? 'V' : 'P') + n;
+}
+// power ranking: a inizio stagione conta la rosa, poi sempre di più i risultati e la forma recente
+function powerScore(t) {
+  const g = t.w + t.l, k = Math.min(1, g / 30);
+  const l = (t.last || []).slice(-10), form = l.length ? l.filter(x => x).length / l.length : 0.5;
+  return (teamStrength(t.id) - 70) * 2.2 * (1 - k * 0.55) + winPct(t) * 45 * k + form * 12 * k;
+}
+const powerRanking = () => [...S.teams].sort((a, b) => powerScore(b) - powerScore(a));
+function powerSnapshot() { S.powerPrev = {}; powerRanking().forEach((t, i) => S.powerPrev[t.id] = i + 1); }
+
+const PO_ROUNDS = ['Play-in', 'Play-in, ultimo posto', 'Primo turno', 'Semifinali di conference', 'Finali di conference', 'Finali'];
+const REAL_PO_RECORDS = {
+  pts: { v: 63, name: 'Michael Giordano', team: 'CHI', season: '1985-86' },
+  reb: { v: 41, name: 'Wilt Ciambellano', team: 'PHI', season: '1966-67' },
+  ast: { v: 24, name: 'Magic Johnsong', team: 'LAL', season: '1983-84' },
+};
+function poRecInit() {
+  recInit();
+  if (!S.records.po) S.records.po = { game: clone(REAL_PO_RECORDS), era: {} };
+  return S.records.po;
+}
+function mkSeries(po, conf, round, slot, a, b) {
+  const s = { id: po.series.length, conf, round, slot, a, b, bo: round < 2 ? 1 : 7, wa: 0, wb: 0, g: [], w: null };
+  po.series.push(s); return s;
+}
+function poInit() {
+  const po = { season: seasonLabel(), round: 0, day: 1, series: [], seeds: {}, seed0: {}, stats: {}, champ: null, fmvp: null };
+  for (const c of ['E', 'W']) {
+    const st = confStandings(c);
+    st.slice(0, 10).forEach((t, i) => po.seeds[t.id] = po.seed0[t.id] = i + 1);
+    mkSeries(po, c, 0, 0, st[6].id, st[7].id);
+    mkSeries(po, c, 0, 1, st[8].id, st[9].id);
   }
-  const champ = round[0];
-  S.lastChampion = champ;
-  addNews(`🏆 <b>${esc(names[3])}</b>: i ${esc(finalTxt)}! Campioni ${seasonLabel()}.`, 'gold');
+  S.po = po;
+  poRecInit();
+  return po;
+}
+const poOn = () => S.po && S.po.season === seasonLabel() && S.phase === 'po';
+const poRound = (r = S.po.round) => S.po.series.filter(s => s.round === r);
+const poActive = () => poRound().filter(s => s.w == null);
+const poLoser = s => s.w == null ? null : s.w === s.a ? s.b : s.a;
+const poWins = (s, tid) => tid === s.a ? s.wa : s.wb;
+const poHome = s => s.bo === 1 || [0, 1, 4, 6].includes(s.g.length) ? s.a : s.b;
+const isGame7 = s => s.bo === 7 && s.wa === 3 && s.wb === 3;
+const myTeamIds = () => new Set(clients().filter(p => p.team != null).map(p => p.team));
+// la serie da guardare oggi: prima quelle con i tuoi clienti, poi la più equilibrata
+function poFeatured() {
+  const my = myTeamIds();
+  return [...poActive()].sort((x, y) => ((my.has(y.a) || my.has(y.b)) - (my.has(x.a) || my.has(x.b))) || (Math.min(y.wa, y.wb) - Math.min(x.wa, x.wb)))[0];
+}
+
+// tabellino di una squadra: i punti della squadra divisi tra chi gioca
+function teamBox(tid, score, ot) {
+  const dc = depthChart(tid);
+  const lines = rosterOf(tid).filter(p => !p.injury && dc.get(p.id) && dc.get(p.id).min).sort(rotCmp).map(p => {
+    const e = dc.get(p.id), st = e.slot === 'start';
+    // ai playoff i titolari giocano di più e la panchina si accorcia
+    let min = e.min * (st ? 1.12 : e.slot === 'bench' ? 0.95 : 0.5) * (1 + gauss() * 0.08) + (st ? ot * randi(3, 5) : ot);
+    min = clamp(Math.round(min), 0, 48 + ot * 5);
+    const q = Math.max(1, p.ovr - 40), f = min / 36;
+    let form = 1 + gauss() * 0.24;
+    if (st && chance(0.035)) form *= rand(1.35, 1.8); // serata storica
+    const rebK = { PG: .07, SG: .09, SF: .13, PF: .2, C: .24 }[p.pos], astK = { PG: .2, SG: .11, SF: .09, PF: .06, C: .05 }[p.pos];
+    return { pid: p.id, min, w: q * f * form, pts: 0,
+      reb: Math.max(0, Math.round(q * rebK * f * (1 + gauss() * .28))), ast: Math.max(0, Math.round(q * astK * f * (1 + gauss() * .28))) };
+  }).filter(l => l.min > 0);
+  const W = lines.reduce((s, l) => s + l.w, 0) || 1;
+  let left = score;
+  for (const l of lines) { l.pts = Math.floor(score * l.w / W); left -= l.pts; }
+  while (left > 0 && lines.length) {
+    let r = Math.random() * W, l = lines[0];
+    for (const x of lines) { r -= x.w; if (r <= 0) { l = x; break; } }
+    l.pts++; left--;
+  }
+  for (const l of lines) delete l.w;
+  return lines;
+}
+// una partita dei playoff, completa di tabellino
+function simMatch(h, a) {
+  const sh = teamStrength(h), sa = teamStrength(a);
+  const hw = chance(winProb(sh + 1.2, sa));
+  const close = chance(0.35);
+  let diff = close ? randi(1, 6) : randi(4, 22);
+  const ot = close && chance(0.18) ? (chance(0.12) ? 2 : 1) : 0;
+  if (ot) diff = randi(1, 8);
+  const base = randi(94, 112) + ot * randi(8, 13);
+  const hs = hw ? base + diff : base, as = hw ? base : base + diff;
+  return { h, a, hs, as, ot, box: { h: teamBox(h, hs, ot), a: teamBox(a, as, ot) } };
+}
+// record nei playoff: di sempre, dal 2026, e il massimo in carriera per i tuoi clienti
+function poRecGame(p, team, l) {
+  const R = poRecInit(), notes = [];
+  p.hi = p.hi || {};
+  for (const k of ['pts', 'reb', 'ast']) {
+    const v = l[k], lab = REC_LABEL[k].toLowerCase();
+    const rec = { v, name: p.name, pid: p.id, team: team.abbr, season: seasonLabel() };
+    if (v > R.game[k].v) {
+      const old = R.game[k];
+      R.game[k] = rec; R.era[k] = clone(rec);
+      notes.push({ gold: true, pid: p.id, t: `${p.name}: ${v} ${lab}, record di sempre nei playoff! Il vecchio primato era di ${old.name} (${old.v}).` });
+      addNews(`📜 <b>RECORD DEI PLAYOFF!</b> ${esc(p.name)}: ${v} ${lab} in una partita. Battuto ${esc(old.name)} (${old.v}).`, 'gold');
+    } else if (!R.era[k] || v > R.era[k].v) {
+      const had = !!R.era[k];
+      R.era[k] = rec;
+      if (had && v >= (k === 'pts' ? 45 : k === 'reb' ? 20 : 16)) {
+        notes.push({ pid: p.id, t: `${p.name}: ${v} ${lab}, la migliore partita di playoff dal 2026.` });
+        addNews(`📜 Playoff: ${esc(p.name)} fa ${v} ${lab}, il massimo dal 2026.`, isClient(p) ? 'gold' : '');
+      }
+    }
+    if (v > (p.hi[k] || 0)) {
+      if (isClient(p) && v >= (k === 'pts' ? 20 : 10)) notes.push({ mine: true, pid: p.id, t: `${p.name}: ${v} ${lab}, il suo massimo in carriera.` });
+      p.hi[k] = v;
+    }
+  }
+  return notes;
+}
+// gioca la prossima gara di una serie e aggiorna statistiche, record e umore
+function poPlay(s) {
+  const po = S.po, n = s.g.length + 1, g7 = isGame7(s);
+  const h = poHome(s), a = h === s.a ? s.b : s.a;
+  const G = simMatch(h, a);
+  const hw = G.hs > G.as;
+  if ((hw ? h : a) === s.a) s.wa++; else s.wb++;
+  const need = s.bo === 1 ? 1 : 4;
+  if (s.wa === need) s.w = s.a; else if (s.wb === need) s.w = s.b;
+  G.n = n; G.g7 = g7; G.sid = s.id; G.notes = [];
+  s.g.push({ h, hs: G.hs, as: G.as, ot: G.ot });
+  for (const side of ['h', 'a']) {
+    const tid = G[side], win = side === 'h' ? hw : !hw, team = S.teams[tid];
+    for (const l of G.box[side]) {
+      const p = S.players[l.pid];
+      const st = po.stats[p.id] = po.stats[p.id] || { gp: 0, min: 0, pts: 0, reb: 0, ast: 0, tid };
+      st.gp++; st.min += l.min; st.pts += l.pts; st.reb += l.reb; st.ast += l.ast; st.tid = tid;
+      if (s.round === 5) { const f = st.f = st.f || { gp: 0, pts: 0, reb: 0, ast: 0 }; f.gp++; f.pts += l.pts; f.reb += l.reb; f.ast += l.ast; }
+      G.notes.push(...poRecGame(p, team, l));
+      l.grade = gameGrade(l.pts, l.reb, l.ast, win);
+      if (isClient(p)) {
+        const gs = l.pts + l.reb * .5 + l.ast * .7;
+        p.hype = clamp(p.hype + clamp((gs - 15) * 0.09, -1.5, 3) * (g7 ? 2 : 1), 0, 100);
+        p.last = { opp: side === 'h' ? a : h, home: side === 'h', win, us: side === 'h' ? G.hs : G.as, them: side === 'h' ? G.as : G.hs, min: l.min, pts: l.pts, reb: l.reb, ast: l.ast, grade: l.grade, po: true };
+      }
+    }
+  }
+  if (s.w != null) poSeriesEnd(s, G);
+  G.st = UI.poStatus(s);
+  return G;
+}
+function poSeriesEnd(s, G) {
+  const w = S.teams[s.w], l = S.teams[poLoser(s)];
+  const score = s.bo === 1 ? `${Math.max(G.hs, G.as)}-${Math.min(G.hs, G.as)}` : `${Math.max(s.wa, s.wb)}-${Math.min(s.wa, s.wb)}`;
+  G.result = s.bo === 1 ? `${teamName(w)} battono ${teamName(l)} ${score}` : `${teamName(w)} vincono la serie ${score}${s.g.length === 7 ? ' a gara 7' : ''}`;
+  for (const p of clients()) {
+    if (p.team === s.w) { p.morale = clamp(p.morale + 3, 0, 100); if (s.round >= 2) changeRep(0.4); }
+    if (p.team === poLoser(s) && s.round >= 2) addNews(`🏀 Finisce la stagione di <b>${esc(p.name)}</b>: i ${esc(teamName(l))} escono ${s.round === 5 ? 'in finale' : 'al ' + PO_ROUNDS[s.round].toLowerCase()} (${score}).`);
+  }
+  if (s.round >= 3 || s.g.length === 7) addNews(`🏆 ${PO_ROUNDS[s.round]}: i ${esc(G.result)}.`, s.round === 5 ? 'gold' : '');
+}
+// turno finito: si preparano le serie successive
+function poNextRound() {
+  const po = S.po, r = po.round;
+  if (r === 5) return poChampion();
+  if (r === 0) for (const c of ['E', 'W']) {
+    const [x, y] = poRound(0).filter(s => s.conf === c).sort((p, q) => p.slot - q.slot);
+    const lx = poLoser(x);
+    po.seeds[x.w] = 7; po.seeds[lx] = 8; po.seeds[poLoser(y)] = 0;
+    mkSeries(po, c, 1, 0, lx, y.w);
+  }
+  else if (r === 1) {
+    for (const s of poRound(1)) { po.seeds[s.w] = 8; po.seeds[poLoser(s)] = 0; }
+    for (const c of ['E', 'W']) {
+      const by = {}; for (const [id, sd] of Object.entries(po.seeds)) if (sd >= 1 && sd <= 8 && confOf(S.teams[id]) === c) by[sd] = +id;
+      [[1, 8], [4, 5], [3, 6], [2, 7]].forEach(([x, y], i) => mkSeries(po, c, 2, i, by[x], by[y]));
+    }
+    const ids = new Set(po.series.filter(s => s.round === 2).flatMap(s => [s.a, s.b]));
+    chalUpdate('playoff', clients().filter(p => ids.has(p.team)).length, 'set');
+  } else if (r < 4) for (const c of ['E', 'W']) {
+    const prev = poRound(r).filter(s => s.conf === c).sort((x, y) => x.slot - y.slot);
+    for (let i = 0; i < prev.length; i += 2) {
+      const x = prev[i].w, y = prev[i + 1].w, [a, b] = po.seeds[x] <= po.seeds[y] ? [x, y] : [y, x];
+      mkSeries(po, c, r + 1, i / 2, a, b);
+    }
+  } else {
+    const [e, w] = ['E', 'W'].map(c => poRound(4).find(s => s.conf === c).w);
+    const [a, b] = winPct(S.teams[e]) >= winPct(S.teams[w]) ? [e, w] : [w, e];
+    mkSeries(po, 'F', 5, 0, a, b);
+  }
+  po.round++;
+}
+function poChampion() {
+  const po = S.po, fin = poRound(5)[0];
+  po.champ = fin.w;
+  S.lastChampion = fin.w;
+  const fs = f => (f.pts + f.reb * .5 + f.ast * .7) / f.gp;
+  const cands = Object.entries(po.stats).filter(([, st]) => st.tid === fin.w && st.f).sort((x, y) => fs(y[1].f) - fs(x[1].f));
+  if (cands[0]) {
+    const p = S.players[cands[0][0]], f = cands[0][1].f;
+    po.fmvp = { pid: p.id, line: `${r1(f.pts / f.gp)} pt · ${r1(f.reb / f.gp)} rb · ${r1(f.ast / f.gp)} as` };
+    p.career.fmvp = (p.career.fmvp || 0) + 1; p.hype = clamp(p.hype + 20, 0, 100);
+    addNews(`🥇 MVP delle Finali: <b>${esc(p.name)}</b> (${esc(teamName(teamOf(p)))}).`, 'gold');
+    if (isClient(p)) changeRep(4);
+  }
+}
+// simula senza guardare: la giornata, il turno o tutto fino al titolo
+function poDay(skip = null) {
+  for (const s of poActive()) if (s.id !== skip) poPlay(s);
+  S.po.day++;
+  if (!poActive().length) poNextRound();
+}
+function poSimRound() { const r = S.po.round; while (S.po.champ == null && S.po.round === r) poDay(); }
+function poSimAll() { if (!S.po || S.po.season !== seasonLabel()) poInit(); while (S.po.champ == null) poDay(); }
+
+// fine dei playoff: titolo, premi, reputazione
+function poFinish() {
+  const po = S.po, champ = po.champ;
+  const fin = poRound(5)[0];
+  addNews(`🏆 <b>Finali</b>: i ${esc(teamName(S.teams[champ]))} battono i ${esc(teamName(S.teams[poLoser(fin)]))} ${Math.max(fin.wa, fin.wb)}-${Math.min(fin.wa, fin.wb)}! Campioni ${seasonLabel()}.`, 'gold');
+  const playoffTeams = new Set(po.series.filter(s => s.round >= 2).flatMap(s => [s.a, s.b]));
   for (const p of clients()) {
     if (p.team === champ) {
       p.career.titles++; p.hype = clamp(p.hype + 12, 0, 100); p.morale = clamp(p.morale + 15, 0, 100);
@@ -1983,6 +2198,62 @@ function playoffs() {
   changeRep(tot / 90 - 0.5);
   S.history.push({ season: seasonLabel(), income: S.seasonIncome, expense: S.seasonExpense, rep: S.rep, clients: S.clients.length });
   checkGoal('million', S.seasonIncome >= 1e6);
+}
+
+/* ---------- Telecronaca: la partita raccontata canestro per canestro ---------- */
+const PER = 720, OTL = 300; // secondi di un quarto e di un supplementare
+// divide i punti di un giocatore in tiri liberi, canestri da due e triple
+function splitPts(pts, pos) {
+  const share = { PG: .38, SG: .4, SF: .32, PF: .22, C: .08 }[pos] || .3;
+  let t3 = Math.max(0, Math.round(pts * share / 3 * rand(.6, 1.4)));
+  while (t3 * 3 > pts) t3--;
+  let ft = Math.min(pts - t3 * 3, Math.round(pts * rand(.1, .24)));
+  if ((pts - t3 * 3 - ft) % 2) ft++;
+  if (ft > pts - t3 * 3) { ft = (pts - t3 * 3) % 2; }
+  const t2 = (pts - t3 * 3 - ft) / 2;
+  return [...Array(t3).fill(3), ...Array(t2).fill(2), ...Array(ft).fill(1)];
+}
+function playByPlay(G) {
+  const end = 4 * PER + G.ot * OTL, ev = [];
+  const sides = { h: [], a: [] };
+  // i supplementari partono dal pareggio: i punti di ogni supplementare sono esatti
+  const ties = [];
+  if (G.ot) { let lv = Math.min(G.hs, G.as); for (let k = G.ot; k >= 1; k--) { lv -= randi(6, 12); ties.unshift(lv); } }
+  for (const side of ['h', 'a']) {
+    let pool = [];
+    for (const l of G.box[side]) for (const v of splitPts(l.pts, S.players[l.pid].pos)) pool.push({ side, pid: l.pid, v });
+    pool = shuffle(pool);
+    const fin = side === 'h' ? G.hs : G.as, segs = [];
+    for (let k = 0; k <= G.ot; k++) segs.push((k < G.ot ? ties[k] : fin) - (k ? ties[k - 1] : 0));
+    const take = target => {
+      const out = []; let need = target;
+      for (let i = pool.length - 1; i >= 0 && need > 0; i--) if (pool[i].v <= need) { need -= pool[i].v; out.push(...pool.splice(i, 1)); }
+      while (need > 0) { // spezza un canestro da due in due liberi
+        const i = pool.findIndex(x => x.v === 2); if (i < 0) break;
+        const b = pool.splice(i, 1)[0]; pool.push({ ...b, v: 1 }); out.push({ ...b, v: 1 }); need--;
+      }
+      return out;
+    };
+    for (let k = G.ot; k >= 1; k--) {
+      const from = 4 * PER + (k - 1) * OTL;
+      for (const b of take(segs[k])) ev.push({ ...b, t: from + Math.random() * (OTL - 2) });
+    }
+    for (const b of pool) ev.push({ ...b, t: Math.random() * (4 * PER - 2) });
+    sides[side] = G.box[side];
+  }
+  ev.sort((x, y) => x.t - y.t);
+  // assist: legati ai canestri dei compagni
+  for (const side of ['h', 'a']) {
+    const shots = ev.filter(e => e.side === side && e.v > 1);
+    for (const l of sides[side]) {
+      let k = l.ast;
+      const opts = shuffle(shots.filter(e => e.pid !== l.pid && !e.ast));
+      while (k-- > 0 && opts.length) opts.pop().ast = l.pid;
+    }
+    for (const l of sides[side]) for (let i = 0; i < l.reb; i++) ev.push({ side, pid: l.pid, v: 0, reb: true, t: Math.random() * (end - 2) });
+  }
+  ev.sort((x, y) => x.t - y.t);
+  return { end, ev };
 }
 
 function runDraft() {
@@ -2189,7 +2460,7 @@ function offseason() {
     const r = rosterOf(t.id).sort((a, b) => a.ovr - b.ovr);
     while (r.length > 15) { const cut = r.shift(); cut.team = null; if (isClient(cut)) addNews(`✂️ ${esc(cut.name)} è stato tagliato dai ${esc(t.name)}.`, 'bad'); }
   }
-  for (const t of S.teams) { t.w = 0; t.l = 0; if (S.teamRel[t.id] != null) S.teamRel[t.id] = Math.round(S.teamRel[t.id] + (50 - S.teamRel[t.id]) * 0.2); }
+  for (const t of S.teams) { t.w = 0; t.l = 0; t.last = []; if (S.teamRel[t.id] != null) S.teamRel[t.id] = Math.round(S.teamRel[t.id] + (50 - S.teamRel[t.id]) * 0.2); }
   for (const b of Object.keys(S.brandRel)) S.brandRel[b] = Math.round(S.brandRel[b] + (50 - S.brandRel[b]) * 0.2);
   closeChallenges();
   payDividends();
@@ -2365,7 +2636,7 @@ const UI = {
     if (!S) { app.innerHTML = this.startScreen(); return; }
     const inbox = S.inbox.length;
     const nOffers = S.offers.length;
-    const advLabel = { fa: 'Avanza settimana ▶', reg: 'Gioca settimana ▶', po: 'Gioca i playoff ▶', draft: 'Vai al Draft ▶' }[S.phase];
+    const advLabel = { fa: 'Avanza settimana ▶', reg: 'Gioca settimana ▶', po: S.po && S.po.champ != null && S.po.season === seasonLabel() ? 'Chiudi la stagione ▶' : 'Vai ai playoff ▶', draft: 'Vai al Draft ▶' }[S.phase];
     app.innerHTML = deEmo(`
       <header class="top">
         <div class="top-row">
@@ -2479,9 +2750,10 @@ const UI = {
         <span>${S.debtWeeks ? `Hai ${4 - S.debtWeeks} settiman${4 - S.debtWeeks > 1 ? 'e' : 'a'} per rientrare, poi ti ritirano la licenza.` : 'Se resti in rosso per 4 settimane ti ritirano la licenza.'}</span>
         ${S.loan ? `<span>Hai già un prestito in corso: la banca non ti dà altro.</span>` : `<button class="btn primary sm" onclick="UI.loanModal()">Chiedi un prestito</button>`}</div></div>` : ''}
       <div id="t-ev">
+      ${poOn() ? this.poHomeCard() : ''}
       <div class="sec"><h2>Questa settimana</h2>${S.inbox.length ? `<span class="muted small">${S.inbox.length} da decidere</span>` : ''}</div>
       ${S.inbox.length ? `<div class="must" role="note">${ic('alert')} Decidi prima di avanzare</div><div class="evs">${S.inbox.map(e => this.eventCard(e)).join('')}</div>`
-        : `<div class="ev calm"><div class="ev-top"><div class="ev-ico">${ic('ball')}</div><div><h3>Settimana tranquilla</h3><p>${CALM[S.turn % CALM.length]} Premi <b>${{ fa: 'Avanza settimana', reg: 'Gioca settimana', po: 'Gioca i playoff', draft: 'Vai al Draft' }[S.phase]}</b> per andare avanti.</p></div></div></div>`}
+        : `<div class="ev calm"><div class="ev-top"><div class="ev-ico">${ic('ball')}</div><div><h3>Settimana tranquilla</h3><p>${CALM[S.turn % CALM.length]} Premi <b>${{ fa: 'Avanza settimana', reg: 'Gioca settimana', po: 'Vai ai playoff', draft: 'Vai al Draft' }[S.phase]}</b> per andare avanti.</p></div></div></div>`}
       </div>
 
       ${S.offers.length ? `<div class="sec"><h2>Trattative aperte</h2></div><div class="feed">${[...new Set(S.offers.map(o => o.pid))].map(pid => {
@@ -2686,7 +2958,7 @@ const UI = {
     else if (p.injDebt) meta = `🩹 Sta tornando in forma (−${p.injDebt} di valutazione per qualche settimana)`;
     else if (p.school) { const pr = draftProjection(p); meta = `🎓 ${esc(p.school)} · proiezione Draft <b>${projTxt(p)}</b>${p.promise != null ? ` · 📣 promesso ai ${esc(S.teams[p.promise].name)}` : ''}`; }
     else if (!t) { const n = S.offers.filter(o => o.pid === p.id).length; meta = `🆓 Senza squadra${n ? ` · <b>${n} offert${n > 1 ? 'e' : 'a'}</b>` : ''}`; }
-    else meta = `${ng ? `📅 Prossima: <b>${esc(ng)}</b> · ` : ''}🏆 ${teamRank(t.id)}ª in classifica (${t.w}-${t.l})<br>Ruolo: <b>${roleTxt(p, t.id)}</b>`;
+    else meta = `${ng ? `📅 Prossima: <b>${esc(ng)}</b> · ` : ''}🏆 ${confRank(t.id)}ª a ${CONF_NAME[confOf(t)]} (${t.w}-${t.l})<br>Ruolo: <b>${roleTxt(p, t.id)}</b>`;
     const stats = t && p.gp ? `<div class="pl-stats"><span><b>${r1(avg(p, 'min'))}</b>MIN</span><span><b>${r1(avg(p, 'pts'))}</b>PTS</span><span><b>${r1(avg(p, 'reb'))}</b>REB</span><span><b>${r1(avg(p, 'ast'))}</b>AST</span></div>` : '';
     return `<button class="pl" onclick="UI.player(${p.id})">
       ${avatarSVG(p, 52)}
@@ -2951,19 +3223,53 @@ const UI = {
   },
 
   /* ---------- Lega ---------- */
+  lgTab: null,
+  // in Home durante i playoff: a che punto sono le squadre dei tuoi clienti
+  poHomeCard() {
+    const po = S.po, my = myTeamIds();
+    const cur = tid => [...po.series].reverse().find(s => s.a === tid || s.b === tid);
+    const rows = [...my].map(tid => {
+      const s = cur(tid), t = S.teams[tid];
+      if (!s) return `<li>${teamChip(tid)} <span class="muted">fuori dai playoff</span></li>`;
+      const out = s.w != null && s.w !== tid, opp = S.teams[s.a === tid ? s.b : s.a].abbr, me = poWins(s, tid), them = poWins(s, s.a === tid ? s.b : s.a);
+      const txt = po.champ === tid ? '<b class="gold">campioni!</b>' : out ? (s.round < 2 ? 'fuori al play-in' : s.round === 5 ? 'battuti in finale' : 'eliminati, ' + PO_ROUNDS[s.round].toLowerCase())
+        : s.w === tid ? 'passano il turno' : s.bo === 1 ? `play-in contro ${opp}` : me > them ? `avanti <b>${me}-${them}</b> con ${opp}` : me < them ? `sotto <b>${me}-${them}</b> con ${opp}` : `<b>${me}-${them}</b> con ${opp}`;
+      return `<li>${teamChip(tid)} <span class="${out ? 'muted' : ''}">${txt}</span></li>`;
+    }).join('');
+    return `<div class="po-banner live home">${ic('trophy')}<div><b>${po.champ != null ? 'Playoff finiti: ' + esc(teamName(S.teams[po.champ])) + ' campioni' : 'Playoff · ' + PO_ROUNDS[po.round]}</b>
+      ${rows ? `<ul class="po-mylist">${rows}</ul>` : '<small>Nessun tuo cliente gioca i playoff, ma puoi seguirli lo stesso.</small>'}</div>
+      <button class="btn sm primary" onclick="UI.openPlayoffs()">${po.champ != null ? 'Rivedi' : 'Tabellone'}</button></div>`;
+  },
+  v_conf(c, myTeams) {
+    const st = confStandings(c), lead = st[0];
+    return `<div class="tbl-wrap"><table class="conf-t">
+        <tr><th>#</th><th>Squadra</th><th class="num">V</th><th class="num">P</th><th class="num">%</th><th class="num">Dist.</th><th class="num">Ult. 10</th><th class="num">Serie</th></tr>
+        ${st.map((t, i) => { const gb = gamesBehind(t, lead); return `<tr class="${myTeams.has(t.id) ? 'mine' : ''}${i === 6 ? ' cutline' : ''}${i === 10 ? ' cutline out' : ''}"><td>${i + 1}</td><td>${esc(teamName(t))}${myTeams.has(t.id) ? ' <i class="po-dot"></i>' : ''}</td><td class="num">${t.w}</td><td class="num">${t.l}</td>
+          <td class="num">${winPct(t).toFixed(3).replace(/^0/, '')}</td><td class="num">${gb ? String(gb).replace('.', ',') : '-'}</td><td class="num">${last10(t)}</td><td class="num">${streakTxt(t)}</td></tr>`; }).join('')}
+      </table></div>
+      <p class="small muted">Conference ${CONF_NAME[c]}. Le prime 6 vanno dritte ai playoff, dalla 7ª alla 10ª si giocano gli ultimi due posti nel play-in. Righe evidenziate: squadre con tuoi clienti.</p>`;
+  },
+  v_power(myTeams) {
+    const pw = powerRanking(), prev = S.powerPrev || {};
+    return `<div class="tbl-wrap"><table>
+        <tr><th>#</th><th></th><th>Squadra</th><th class="num">V-P</th><th class="num">Forza</th><th class="num">Monte ingaggi</th><th class="num">Spazio cap</th><th>Rapporto</th></tr>
+        ${pw.map((t, i) => { const pr = payroll(t.id), was = prev[t.id], mv = was ? was - (i + 1) : 0;
+          return `<tr class="${myTeams.has(t.id) ? 'mine' : ''}"><td>${i + 1}</td><td class="pw-mv ${mv > 0 ? 'good' : mv < 0 ? 'bad' : 'muted'}">${mv > 0 ? '↑' + mv : mv < 0 ? '↓' + (-mv) : '='}</td><td>${esc(teamName(t))} <small class="muted">${CONF_NAME[confOf(t)]}</small></td><td class="num">${t.w}-${t.l}</td>
+          <td class="num">${teamStrength(t.id).toFixed(1)}</td><td class="num">${fmtM(pr)}</td><td class="num ${CAP - pr > 0 ? 'good' : 'muted'}">${CAP - pr > 0 ? fmtM(CAP - pr) : '-'}</td><td>${relLabel(teamRel(t.id))} <span class="muted">${teamRel(t.id)}</span></td></tr>`; }).join('')}
+      </table></div>
+      <p class="small muted">Le 30 squadre in ordine di forza vera: conta la rosa, ma con il passare delle settimane contano sempre di più i risultati e la forma delle ultime partite. Le frecce dicono quanti posti hanno guadagnato o perso dalla settimana scorsa. Salary cap: ${fmtM(CAP)}.</p>`;
+  },
   v_league() {
-    const st = standings();
+    if (!this.lgTab) { const t = clients().map(teamOf).find(Boolean); this.lgTab = t ? confOf(t) : 'E'; }
     const myTeams = new Set(clients().map(p => p.team));
     const rk = this.agencyRanking();
     return `
-      <h2>Classifica ${seasonLabel()}</h2>
-      ${S.lastChampion != null ? `<p class="small muted">Ultimi campioni: <b class="gold">${esc(teamName(S.teams[S.lastChampion]))}</b></p>` : ''}
-      <div class="tbl-wrap"><table>
-        <tr><th>#</th><th>Squadra</th><th class="num">V</th><th class="num">P</th><th class="num">%</th><th class="num">Forza</th><th class="num">Monte ingaggi</th><th class="num">Spazio cap</th><th>Rapporto</th></tr>
-        ${st.map((t, i) => { const pr = payroll(t.id); return `<tr class="${myTeams.has(t.id) ? 'mine' : ''}${i === 16 ? ' cutline' : ''}"><td>${i + 1}</td><td>${esc(teamName(t))}</td><td class="num">${t.w}</td><td class="num">${t.l}</td>
-          <td class="num">${winPct(t).toFixed(3).replace(/^0/, '')}</td><td class="num">${teamStrength(t.id).toFixed(1)}</td><td class="num">${fmtM(pr)}</td><td class="num ${CAP - pr > 0 ? 'good' : 'muted'}">${CAP - pr > 0 ? fmtM(CAP - pr) : '—'}</td><td>${relLabel(teamRel(t.id))} <span class="muted">${teamRel(t.id)}</span></td></tr>`; }).join('')}
-      </table></div>
-      <p class="small muted">Le prime 16 vanno ai playoff. Righe evidenziate: squadre con tuoi clienti. Salary cap: ${fmtM(CAP)}.</p>
+      ${S.po ? `<div class="po-banner ${poOn() ? 'live' : ''}">${ic('trophy')}<div><b>${poOn() ? (S.po.champ != null ? 'Playoff finiti: ' + esc(teamName(S.teams[S.po.champ])) + ' campioni' : 'Playoff in corso: ' + PO_ROUNDS[S.po.round].toLowerCase()) : 'Playoff ' + esc(S.po.season)}</b>
+        <small>${!poOn() && S.po.champ != null ? 'Campioni: ' + esc(teamName(S.teams[S.po.champ])) : 'Tabellone, risultati e partite in diretta'}</small></div><button class="btn sm primary" onclick="UI.openPlayoffs()">Tabellone</button></div>` : ''}
+      <h2>Classifiche ${seasonLabel()}</h2>
+      ${S.lastChampion != null && !(S.po && S.po.champ != null && !poOn()) ? `<p class="small muted">Ultimi campioni: <b class="gold">${esc(teamName(S.teams[S.lastChampion]))}</b></p>` : ''}
+      <div class="seg lg-seg">${[['E', 'Est'], ['W', 'Ovest'], ['P', 'Power ranking']].map(([k, l]) => `<button class="${this.lgTab === k ? 'on' : ''}" onclick="UI.lgTab='${k}';UI.render()">${l}</button>`).join('')}</div>
+      ${this.lgTab === 'P' ? this.v_power(myTeams) : this.v_conf(this.lgTab, myTeams)}
       <h2>Classifica agenzie (stipendi gestiti)</h2>
       <div class="tbl-wrap"><table><tr><th>#</th><th>Agenzia</th><th class="num">Stipendi</th></tr>
         ${rk.map((r, i) => `<tr class="${r.mine ? 'mine' : ''}"><td>${i + 1}</td><td>${esc(r.name)}</td><td class="num">${fmtM(r.sal)}</td></tr>`).join('')}</table></div>
@@ -2985,7 +3291,16 @@ const UI = {
     const mine = clients().filter(p => !p.retired);
     const tuo = pid => pid != null && S.players[pid] && isClient(S.players[pid]) ? ' <span class="tag fa">tuo</span>' : '';
     let body = '';
-    if (tab === 'game' || tab === 'season') {
+    if (tab === 'po') {
+      const P = poRecInit();
+      body = `<div class="grid">${['pts', 'reb', 'ast'].map(k => {
+        const r = P.game[k], era = P.era[k];
+        const myv = mine.map(p => ({ name: p.name, v: (p.hi || {})[k] || 0 })).sort((a, b) => b.v - a.v)[0];
+        return `<div class="card rec-card"><h3>${REC_LABEL[k]} in una partita di playoff</h3>
+          <div class="rec-main"><b class="gold">${r.v}</b><span><b>${esc(r.name)}</b>${tuo(r.pid)}<small>${esc(r.team || '')} · ${esc(r.season)}</small></span></div>
+          <p class="small muted">Migliore dal 2026: ${era ? `<b>${era.v}</b>, ${esc(era.name)}${tuo(era.pid)} (${esc(era.season)})` : 'ancora nessuno'}</p></div>`;
+      }).join('')}</div>`;
+    } else if (tab === 'game' || tab === 'season') {
       const keys = tab === 'game' ? ['pts', 'reb', 'ast'] : ['ppg', 'rpg', 'apg'];
       body = `<div class="grid">${keys.map(k => {
         const r = R[tab][k], era = R.era[tab][k];
@@ -3011,7 +3326,7 @@ const UI = {
     }
     return `<h2>Record della lega</h2>
       <p class="small muted">Sono i record veri della storia NBA, con i nomi del gioco. Le classifiche di carriera mettono insieme le leggende del passato e chi gioca oggi: i tuoi clienti possono scalarle stagione dopo stagione.</p>
-      <div class="filters"><div class="seg">${[['game', 'Partita'], ['season', 'Stagione'], ['career', 'Carriera'], ['awards', 'Premi']].map(([k, l]) =>
+      <div class="filters"><div class="seg">${[['game', 'Partita'], ['season', 'Stagione'], ['po', 'Playoff'], ['career', 'Carriera'], ['awards', 'Premi']].map(([k, l]) =>
         `<button class="${tab === k ? 'on' : ''}" onclick="UI.recTab='${k}';UI.tab='league';UI.render();document.getElementById('t-rec').scrollIntoView()">${l}</button>`).join('')}</div></div>
       ${body}`;
   },
@@ -3107,6 +3422,241 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') UI.closeModa
 /* ================================================================== */
 /* Tutorial con Coach Gigi                                             */
 /* ================================================================== */
+/* ---------- Playoff: tabellone, partite in diretta, campioni ---------- */
+const txtOn = hex => { const n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255; return r * .3 + g * .59 + b * .11 > 150 ? '#111' : '#fff'; };
+const teamChip = (tid, big) => { const t = S.teams[tid]; return `<span class="po-chip${big ? ' big' : ''}" style="background:${t.color};color:${txtOn(t.color)};border-color:${t.color2}">${t.abbr}</span>`; };
+const PO_SPEED = [['Lenta', 1.6], ['Normale', 0.75], ['Veloce', 0.2]]; // secondi veri per ogni minuto di partita
+const SHOT_TXT = { 3: ['Tripla di {N}', 'Tripla di {N} dall\'angolo', 'Bomba di {N} da nove metri'], 2: ['Canestro di {N}', 'Entrata di {N}', 'Arresto e tiro di {N}', 'Schiacciata di {N}', 'Tiro dalla media di {N}'], 2.5: ['Gancio di {N}', 'Schiacciata di {N}', 'Canestro da sotto di {N}', 'Tap-in di {N}'], 1: ['Tiro libero di {N}'] };
+Object.assign(UI, {
+  poSide: null, poSpeed: 1, poLast: null,
+  openPlayoffs() {
+    if (S.phase === 'po' && (!S.po || S.po.season !== seasonLabel())) { poInit(); save(); }
+    if (!S.po) return;
+    if (!this.poSide) { const my = myTeamIds(); this.poSide = [...my].some(id => confOf(S.teams[id]) === 'W') && ![...my].some(id => confOf(S.teams[id]) === 'E') ? 'W' : 'E'; }
+    let box = document.getElementById('poview');
+    if (!box) { box = document.createElement('div'); box.id = 'poview'; document.body.appendChild(box); }
+    box.hidden = false; document.body.classList.add('po-open');
+    hideToast();
+    this.poDraw();
+  },
+  poClose() {
+    clearInterval(this.poTimer); this.poTimer = null;
+    const box = document.getElementById('poview'); if (box) box.hidden = true;
+    document.body.classList.remove('po-open');
+    this.render();
+  },
+  poSeed(tid, s) { const v = s && s.round < 2 && S.po.seed0 ? S.po.seed0[tid] : S.po.seeds[tid]; return v || ''; },
+  poSeries(s, ph) {
+    if (!s) return `<div class="po-s empty">${ph || '<div class="po-t"><b>da definire</b></div>'}</div>`;
+    const my = myTeamIds();
+    const row = (tid, wins) => `<div class="po-t ${s.w === tid ? 'w' : s.w != null ? 'l' : ''} ${my.has(tid) ? 'mine' : ''}">
+      <span class="sd">${this.poSeed(tid, s)}</span><b>${S.teams[tid].abbr}</b>${my.has(tid) ? '<i class="po-dot"></i>' : ''}<span class="wn">${s.bo === 1 ? (s.g[0] ? (tid === s.g[0].h ? s.g[0].hs : s.g[0].as) : '') : wins}</span></div>`;
+    const g7 = s.g.length === 7 || isGame7(s);
+    return `<div class="po-s ${my.has(s.a) || my.has(s.b) ? 'mine' : ''}">${g7 ? '<span class="po-g7">Gara 7</span>' : ''}${row(s.a, s.wa)}${row(s.b, s.wb)}</div>`;
+  },
+  poBracket(c) {
+    const po = S.po, by = (r, slot) => po.series.find(s => s.conf === c && s.round === r && s.slot === slot);
+    const col = (r, n, name) => `<div class="po-col"><div class="po-ch">${name}</div><div class="po-cb">${Array.from({ length: n }, (_, i) => this.poSeries(by(r, i))).join('')}</div></div>`;
+    const pin = po.series.filter(s => s.conf === c && s.round < 2);
+    return `<div class="po-pin"><div class="po-ch">Play-in</div><div class="po-pin-l">${pin.map(s => this.poSeries(s)).join('')}</div></div>
+      <div class="po-br">${col(2, 4, 'Primo turno')}${col(3, 2, 'Semifinali')}${col(4, 1, 'Finale ' + CONF_NAME[c])}</div>`;
+  },
+  poGameTxt(G) {
+    const hw = G.hs > G.as;
+    return `${teamChip(G.h)} <b class="${hw ? '' : 'muted'}">${G.hs}</b> - <b class="${hw ? 'muted' : ''}">${G.as}</b> ${teamChip(G.a)}${G.ot ? ` <small class="muted">${G.ot > 1 ? G.ot + ' supplementari' : 'dopo un supplementare'}</small>` : ''}`;
+  },
+  poStatus(s) {
+    const A = S.teams[s.a].abbr, B = S.teams[s.b].abbr;
+    if (s.bo === 1) return s.w != null ? `vince ${S.teams[s.w].abbr}` : '';
+    if (s.w != null) return `${S.teams[s.w].abbr} vince ${Math.max(s.wa, s.wb)}-${Math.min(s.wa, s.wb)}`;
+    if (s.wa === s.wb) return s.wa ? `serie pari ${s.wa}-${s.wb}` : 'si comincia';
+    return `${s.wa > s.wb ? A : B} avanti ${Math.max(s.wa, s.wb)}-${Math.min(s.wa, s.wb)}`;
+  },
+  // righe dei tuoi clienti in una partita
+  poMine(G) {
+    const out = [];
+    for (const side of ['h', 'a']) for (const l of G.box[side]) {
+      const p = S.players[l.pid]; if (!isClient(p)) continue;
+      out.push(`<div class="po-me">${avatarSVG(p, 30)}<span><b>${esc(p.name)}</b><small>${l.min}' · ${l.pts} pt · ${l.reb} rb · ${l.ast} as</small></span><span class="grade ${gradeClass(l.grade)}">${l.grade}</span></div>`);
+    }
+    return out.join('');
+  },
+  poNotes(G) { return (G.notes || []).map(n => `<div class="po-note ${n.gold ? 'gold' : n.mine ? 'mine' : ''}">${ic(n.gold ? 'trophy' : 'star')}<span>${esc(n.t)}</span></div>`).join(''); },
+  poDraw() {
+    const po = S.po, box = document.getElementById('poview'); if (!box) return;
+    clearInterval(this.poTimer); this.poTimer = null;
+    const live = S.phase === 'po' && po.season === seasonLabel() && po.champ == null;
+    let top = '';
+    if (po.champ != null) {
+      const fin = po.series.find(s => s.round === 5), ct = S.teams[po.champ], mvp = po.fmvp && S.players[po.fmvp.pid];
+      const rings = clients().filter(p => p.team === po.champ);
+      top = `<div class="po-champ" style="--tc:${ct.color};--tc2:${ct.color2}">
+        <div class="po-cup">${ic('trophy')}</div><small>Campioni ${esc(po.season)}</small><h2>${esc(teamName(ct))}</h2>
+        <p>Finali vinte ${Math.max(fin.wa, fin.wb)}-${Math.min(fin.wa, fin.wb)} contro i ${esc(teamName(S.teams[poLoser(fin)]))}${fin.g.length === 7 ? ', a gara 7' : ''}.</p>
+        ${mvp ? `<p class="small">MVP delle Finali: <b>${esc(mvp.name)}</b>${isClient(mvp) ? ' <span class="tag fa">tuo</span>' : ''} · ${po.fmvp.line}</p>` : ''}
+        ${rings.length ? `<p class="po-ring">${ic('ring')} ${rings.map(p => `<b>${esc(p.name)}</b>`).join(', ')} ${rings.length > 1 ? 'vincono' : 'vince'} l'anello!</p>` : ''}
+        ${S.phase === 'po' ? `<button class="btn primary big" onclick="UI.poClose();advance()">Continua la stagione ▶</button>` : ''}</div>`;
+    } else if (live) {
+      const act = poActive(), my = myTeamIds(), feat = poFeatured();
+      const games = act.map(s => {
+        const h = poHome(s), mine = my.has(s.a) || my.has(s.b);
+        return `<div class="po-game ${mine ? 'mine' : ''} ${isGame7(s) ? 'g7' : ''}">
+          <div class="po-gl">${teamChip(s.a)}<span class="sd">${this.poSeed(s.a)}</span>${s.bo === 1 ? '<span class="muted">contro</span>' : `<b>${poWins(s, s.a)}</b><span class="muted">-</span><b>${poWins(s, s.b)}</b>`}<span class="sd">${this.poSeed(s.b)}</span>${teamChip(s.b)}</div>
+          <div class="po-gm">${isGame7(s) ? '<span class="po-g7">Gara 7</span> ' : ''}${s.bo === 1 ? 'Partita secca' : 'Gara ' + (s.g.length + 1)} a ${esc(S.teams[h].city)}${s.bo === 1 ? (s.round === 0 ? (s.slot === 0 ? ' · chi vince è settimo' : ' · chi perde è fuori') : ' · in palio l\'ottavo posto') : ' · ' + this.poStatus(s)}</div>
+          <button class="btn sm ${mine ? 'primary' : ''}" onclick="UI.poWatch(${s.id})">${ic('play')} Guarda</button></div>`;
+      }).join('');
+      top = `<div class="po-acts">
+          <button class="btn primary big" onclick="UI.poWatch(${feat.id})">${ic('play')} Guarda ${S.teams[feat.a].abbr}-${S.teams[feat.b].abbr}${isGame7(feat) ? ', gara 7' : ''}</button>
+          <div class="po-acts2"><button class="btn" onclick="UI.poSim('day')">Simula la giornata</button><button class="btn" onclick="UI.poSim('round')">Simula il turno</button></div>
+          <button class="btn sm po-skip" onclick="UI.poSim('all')">Salta fino al campione</button></div>
+        <div class="po-today"><div class="po-ch">Si gioca oggi</div>${games}</div>`;
+    }
+    const last = this.poLast && this.poLast.po === po ? this.poLast : null;
+    const lastHtml = last && last.games.length ? `<div class="po-last"><div class="po-ch">${last.title}</div>
+      ${last.games.map(G => `<div class="po-res ${G.mine ? 'mine' : ''}"><div class="po-rl">${G.g7 ? '<span class="po-g7">Gara 7</span>' : ''}${this.poGameTxt(G)}</div>
+        <small class="muted">${G.result ? `<b class="gold">${esc(G.result)}</b>` : `${po.series[G.sid].bo === 1 ? 'Play-in' : 'Gara ' + G.n} · ${G.st}`}</small>${this.poMine(G)}${this.poNotes(G)}</div>`).join('')}</div>` : '';
+    const side = this.poSide;
+    const fin = po.series.find(s => s.round === 5);
+    box.innerHTML = deEmo(`<div class="po-panel" role="dialog" aria-label="Playoff">
+      <div class="po-head"><div><div class="po-title">Playoff ${esc(po.season)}</div>
+        <small>${po.champ != null ? 'Si è chiusa la stagione' : PO_ROUNDS[po.round] + (po.round >= 2 ? ' · al meglio delle 7 partite' : ' · partita secca')}</small></div>
+        <button class="btn help" onclick="UI.poClose()" aria-label="Chiudi">${ic('x')}</button></div>
+      ${top}${lastHtml}
+      <div class="po-ch">Tabellone</div>
+      <div class="seg po-seg">${['E', 'W'].map(c => `<button class="${side === c ? 'on' : ''}" onclick="UI.poSide='${c}';UI.poDraw()">${CONF_NAME[c]}</button>`).join('')}</div>
+      ${this.poBracket(side)}
+      <div class="po-fin"><div class="po-ch">Finali</div>${this.poSeries(fin, '<div class="po-t"><b>Est</b></div><div class="po-t"><b>Ovest</b></div>')}</div>
+      <p class="small muted po-legend"><i class="po-dot"></i> squadre con tuoi clienti</p></div>`);
+    box.scrollTop = 0;
+  },
+  poSim(what) {
+    const po = S.po, before = po.series.filter(s => s.w != null).length, games = [];
+    const keep = G => { G.mine = [G.h, G.a].some(id => myTeamIds().has(id)); games.push(G); };
+    const day = () => { for (const s of poActive()) keep(poPlay(s)); po.day++; if (!poActive().length) poNextRound(); };
+    if (what === 'day') day();
+    else if (what === 'round') { const r = po.round; while (po.champ == null && po.round === r) day(); }
+    else while (po.champ == null) day();
+    save();
+    // dopo una giornata si vede tutto; dopo un turno solo record, gare 7 e serie finite con i tuoi
+    const shown = what === 'day' ? games : games.filter(G => (G.notes || []).some(n => n.gold || n.mine) || (G.result && (G.mine || G.g7 || po.series[G.sid].round >= 4)));
+    this.poLast = { po, title: what === 'day' ? 'Risultati di oggi' : 'Com\'è andata', games: shown.slice(-14) };
+    this.poDraw();
+  },
+  /* partita in diretta */
+  poWatch(sid) {
+    const po = S.po, s = po.series[sid];
+    if (!s || s.w != null) return;
+    const g7 = isGame7(s), round = s.round, n = s.g.length + 1;
+    const pre = s.bo === 1 ? (s.round === 0 && s.slot === 0 ? 'Partita secca per il settimo posto' : 'Partita secca, chi perde va in vacanza') : `Gara ${n} · ${this.poStatus(s)}`;
+    const G = poPlay(s);
+    // le altre partite del giorno si giocano in contemporanea
+    const others = [];
+    for (const x of poActive()) others.push(poPlay(x));
+    po.day++;
+    if (!poActive().length) poNextRound();
+    save();
+    G.mine = true;
+    this.poLast = { po, title: 'Risultati di oggi', games: [G, ...others.map(o => (o.mine = [o.h, o.a].some(id => myTeamIds().has(id)), o))] };
+    const pbp = playByPlay(G);
+    const my = new Set(clients().map(p => p.id));
+    const inBox = [...G.box.h, ...G.box.a];
+    let follow = inBox.filter(l => my.has(l.pid)).map(l => l.pid);
+    if (!follow.length) follow = ['h', 'a'].map(sd => [...G.box[sd]].sort((x, y) => S.players[y.pid].ovr - S.players[x.pid].ovr)[0].pid);
+    const L = { t: 0, i: 0, hs: 0, as: 0, feed: [], st: {}, done: false, marks: {} };
+    for (const l of inBox) L.st[l.pid] = { pts: 0, reb: 0, ast: 0 };
+    const nm = pid => { const p = S.players[pid]; return `<b class="${my.has(pid) ? 'me' : ''}">${esc(p.name)}</b>`; };
+    const clockTxt = t => {
+      const reg = 4 * PER, per = t < reg ? Math.min(3, Math.floor(t / PER)) : Math.floor((t - reg) / OTL);
+      const len = t < reg ? PER : OTL, into = t < reg ? t - per * PER : t - reg - per * OTL, left = Math.max(0, Math.ceil(len - into));
+      return [t < reg ? `${per + 1}° quarto` : per ? `${per + 1}° suppl.` : 'Supplementare', `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`];
+    };
+    const perEnds = []; for (let k = 1; k <= 4 + G.ot; k++) perEnds.push(k <= 4 ? k * PER : 4 * PER + (k - 4) * OTL);
+    let pe = 0;
+    const box = document.getElementById('poview');
+    const hT = S.teams[G.h], aT = S.teams[G.a];
+    box.innerHTML = deEmo(`<div class="po-panel po-livep" role="dialog" aria-label="Partita in diretta">
+      <div class="po-head"><div><div class="po-title">${PO_ROUNDS[round]}</div><small>${pre}</small></div>${g7 ? '<span class="po-g7 big">Gara 7</span>' : ''}</div>
+      <div class="po-board">
+        <div class="po-tm">${teamChip(G.h, true)}<small>${esc(hT.name)}</small></div>
+        <div class="po-sc"><b id="pl-hs">0</b><span>-</span><b id="pl-as">0</b><small id="pl-clk"></small></div>
+        <div class="po-tm">${teamChip(G.a, true)}<small>${esc(aT.name)}</small></div></div>
+      <div class="po-follow" id="pl-fol"></div>
+      <div class="po-feed" id="pl-feed" aria-live="off"></div>
+      <div class="po-ctl" id="pl-ctl"><div class="seg">${PO_SPEED.map(([l], i) => `<button data-sp="${i}" class="${this.poSpeed === i ? 'on' : ''}">${l}</button>`).join('')}</div>
+        <button class="btn sm" id="pl-end">Vai alla fine</button></div>
+      <div id="pl-final"></div></div>`);
+    box.scrollTop = 0;
+    const $ = id => document.getElementById(id);
+    const drawFollow = () => {
+      $('pl-fol').innerHTML = deEmo(follow.map(pid => {
+        const p = S.players[pid], st = L.st[pid], l = inBox.find(x => x.pid === pid);
+        return `<div class="po-me ${my.has(pid) ? '' : 'other'}">${avatarSVG(p, 30)}<span><b>${esc(p.name)}</b><small>${Math.round(l.min * Math.min(1, L.t / pbp.end))}' in campo · ${S.teams[p.team] ? S.teams[p.team].abbr : ''}</small></span>
+          <span class="po-stat"><b>${st.pts}</b> pt <b>${st.reb}</b> rb <b>${st.ast}</b> as</span></div>`;
+      }).join(''));
+    };
+    const push = (html, cls = '') => {
+      const [q, c] = clockTxt(L.t);
+      const f = $('pl-feed');
+      f.insertAdjacentHTML('afterbegin', deEmo(`<div class="po-ev ${cls}"><small>${q.replace(' quarto', 'Q').replace('° ', '°')} ${c}</small><span>${html}</span></div>`));
+      while (f.children.length > 9) f.lastElementChild.remove();
+    };
+    const step = until => {
+      while (L.i < pbp.ev.length && pbp.ev[L.i].t <= until) {
+        while (pe < perEnds.length - 1 && perEnds[pe] <= pbp.ev[L.i].t) { L.t = perEnds[pe] - 0.01; push(`Fine del ${pe < 4 ? ['primo', 'secondo', 'terzo', 'quarto'][pe] + ' quarto' : 'supplementare'}: <b>${hT.abbr} ${L.hs} - ${L.as} ${aT.abbr}</b>${pe === 3 && L.hs === L.as ? '. Si va al supplementare!' : ''}`, 'q'); pe++; }
+        const e = pbp.ev[L.i++]; L.t = e.t;
+        if (e.reb) { L.st[e.pid].reb++; if (follow.includes(e.pid)) push(`Rimbalzo di ${nm(e.pid)}`, my.has(e.pid) ? 'me' : ''); continue; }
+        if (e.side === 'h') L.hs += e.v; else L.as += e.v;
+        L.st[e.pid].pts += e.v;
+        if (e.ast) L.st[e.ast].ast++;
+        const p = S.players[e.pid];
+        const pool = e.v === 2 && (p.pos === 'C' || p.pos === 'PF') ? SHOT_TXT[2.5] : SHOT_TXT[e.v];
+        const big = follow.includes(e.pid) || follow.includes(e.ast) || e.v === 3 || chance(0.35);
+        if (big) push(`${pick(pool).replace('{N}', nm(e.pid))}${e.ast ? `, assist di ${nm(e.ast)}` : ''} · <b>${L.hs}-${L.as}</b>`, my.has(e.pid) || my.has(e.ast) ? 'me' : '');
+        const pts = L.st[e.pid].pts;
+        for (const m of [20, 30, 40, 50, 60]) if (pts >= m && !L.marks[e.pid + ':' + m] && (m >= 30 || my.has(e.pid))) {
+          L.marks[e.pid + ':' + m] = 1; push(`${nm(e.pid)} arriva a <b>${m} punti</b>!`, 'gold');
+        }
+      }
+      L.t = Math.max(L.t, until);
+    };
+    const paint = () => {
+      $('pl-hs').textContent = L.hs; $('pl-as').textContent = L.as;
+      const [q, c] = clockTxt(Math.min(L.t, pbp.end - 0.01));
+      $('pl-clk').textContent = L.done ? (G.ot ? 'Finale dopo ' + (G.ot > 1 ? G.ot + ' supplementari' : 'il supplementare') : 'Finale') : `${q} · ${c}`;
+      drawFollow();
+    };
+    const finish = () => {
+      clearInterval(this.poTimer); this.poTimer = null;
+      step(pbp.end + 1); L.t = pbp.end; L.done = true;
+      L.hs = G.hs; L.as = G.as;
+      push(`<b>Finale: ${hT.abbr} ${G.hs} - ${G.as} ${aT.abbr}</b>`, 'q');
+      paint();
+      $('pl-ctl').hidden = true;
+      const top = sd => [...G.box[sd]].sort((x, y) => y.pts - x.pts)[0];
+      const s2 = po.series[sid];
+      $('pl-final').innerHTML = deEmo(`<div class="po-endc">
+        ${G.result ? `<div class="po-sres">${ic('trophy')} <b>${esc(G.result)}</b></div>` : `<div class="po-sres small">${this.poStatus(s2)}</div>`}
+        ${this.poNotes(G)}
+        <div class="po-ch">Migliori in campo</div>
+        ${['h', 'a'].map(sd => { const l = top(sd), p = S.players[l.pid]; return `<div class="po-top">${teamChip(G[sd])} <b>${esc(p.name)}</b> <span class="muted">${l.pts} pt · ${l.reb} rb · ${l.ast} as</span></div>`; }).join('')}
+        ${this.poMine(G) ? `<div class="po-ch">I tuoi clienti</div>${this.poMine(G)}` : ''}
+        <button class="btn primary big" onclick="UI.poDraw()">Torna al tabellone</button></div>`);
+      $('pl-final').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    };
+    box.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => { this.poSpeed = +b.dataset.sp; box.querySelectorAll('[data-sp]').forEach(x => x.classList.toggle('on', x === b)); });
+    $('pl-end').onclick = finish;
+    const TICK = 100;
+    paint();
+    this.poTimer = setInterval(() => {
+      if (box.hidden) return finish();
+      const adv = 60 / (PO_SPEED[this.poSpeed][1] * 1000 / TICK);
+      step(L.t + adv);
+      if (L.t >= pbp.end) return finish();
+      paint();
+    }, TICK);
+  },
+});
+
 const Tutorial = {
   i: 0, el: null,
   steps: [
@@ -3123,7 +3673,7 @@ const Tutorial = {
     { t: 'tab-clients', h: 'Clienti', x: 'Le schede complete dei tuoi assistiti. Quando una squadra fa un\'offerta compare il pulsante <b>Offerte</b>: tratti stipendio e anni, guardi cosa preferisce il giocatore e puoi giocare la carta dell\'<b>asta</b> (occhio ai bluff). Le offerte scadono! Fagli un <b>Regalo</b> per tenerli contenti, <b>Camp</b> per farli allenare con una leggenda, <b>Cura e immagine</b> per dargli uno staff personale o lanciare una campagna, e <b>Consiglia</b> per proporli a una squadra: un\'offerta per chi è senza contratto, uno scambio per chi ce l\'ha.' },
     { t: 'tab-market', h: 'Mercato', x: 'Qui trovi nuovi clienti: <b>prospetti</b> del college, <b>free agent</b> e giocatori di altre agenzie. Con <b>🔭 Osserva</b> scopri il loro potenziale, con <b>🤝 Coltiva</b> crei un legame prima del Draft. <b>Proponi</b> chiede un incontro: se accetta inizia una vera trattativa. Tu offri commissione, bonus e <b>promesse</b> da mantenere; lui fa una controfferta e ha una pazienza di 2-5 🏀.' },
     { t: null, h: 'Il Draft', x: 'Puoi <b>consigliare</b> un prospetto a una squadra: se ti danno retta, lo sceglieranno al Draft se è ancora libero al loro turno. Più è buono il rapporto con la squadra, più ti ascoltano. E un ragazzo a cui sei molto legato può sceglierti come agente da solo, prima del Draft.' },
-    { t: 'tab-league', h: 'Lega', x: 'Classifica delle 30 squadre col tuo rapporto con ognuna, i rapporti con gli sponsor, i migliori giocatori e la classifica delle agenzie. Le prime 16 vanno ai playoff.' },
+    { t: 'tab-league', h: 'Lega', x: 'Le classifiche di Est e Ovest, il power ranking con il tuo rapporto con ogni squadra, gli sponsor, i migliori giocatori e i record. In ogni conference le prime 6 vanno ai playoff, dalla 7ª alla 10ª passano dal play-in. I playoff li puoi guardare partita per partita.' },
     { t: 'tab-staff', h: 'Staff', x: 'Investi in scout, avvocati, marketing e uffici. Qui assumi anche l\'<b>🕵️ informatore</b>, ingrandisci la <b>🏙️ sede</b> e apri un\'<b>🎓 accademia</b> che ti porta ogni anno ragazzi già legati a te. Più avanti puoi costruire un <b>centro di allenamento</b> per i tuoi clienti, comprare quote delle squadre e perfino una squadra intera. Ogni livello aumenta le spese settimanali.' },
     { t: 't-help', h: 'Tocca a te!', x: 'Puoi rivedere questo tutorial quando vuoi dal pulsante <b>?</b>. Primo consiglio: vai nel <b>Mercato</b>, chiedi un incontro a un free agent e chiudi la trattativa. In bocca al lupo!' },
   ],

@@ -37,7 +37,7 @@ Claude Code legge questo file da solo all'inizio di ogni sessione su questo prog
 **Ordine degli script** in `index.html` e in `tools/build_artifact.py`: names, nations, events, events_extra, traits, tuning, records_data, art, game. Se aggiungi un file JS, mettilo in tutti e due i posti e anche nella lista `APP` di `sw.js`.
 
 ## Regole da rispettare sempre
-1. **Ad ogni rilascio** cambia il numero di `CACHE` in `sw.js` (ora `hoop-agent-v31`), così i telefoni scaricano la versione nuova.
+1. **Ad ogni rilascio** cambia il numero di `CACHE` in `sw.js` (ora `hoop-agent-v32`), così i telefoni scaricano la versione nuova.
 2. **I salvataggi vecchi devono continuare a funzionare.**
    - Lo stato è l'oggetto globale `S`, salvato in localStorage con la chiave `SAVE_KEY = 'superAgenteNBA.save.v2'`. Non cambiare la chiave.
    - Ogni campo nuovo va gestito anche quando manca, nella riga `if (S) { ... }` in fondo a `game.js` e/o con valori predefiniti (`|| 0`).
@@ -61,11 +61,14 @@ Servono Node e Playwright (`require('playwright')`). Ogni script si lancia da so
 - `tools/test_tutorial.js`: ogni passo del tutorial deve indicare qualcosa di visibile, senza che il fumetto lo copra.
 - `tools/test_overflow.js`: nessuna schermata deve uscire dai bordi.
 - `tools/test_save.js`: esporta e reimporta il salvataggio.
+- `tools/test_playoff.js`: tabellone, partita in diretta (il risultato della telecronaca deve tornare con il tabellino), simulazioni e campioni.
 - `tools/audit.js 50`: simula 50 stagioni e controlla che la lega resti sana (stipendi, rose, talento, promesse mantenibili). **Da lanciare dopo ogni cambio di bilanciamento.**
 - `tools/exploit.js 12 [strategia]`: 11 bot con strategie diverse (camp, accademia, prestiti, bluff, avidità, investimenti, spendaccione…) cercano meccaniche troppo forti. I risultati cambiano molto da una partita all'altra: guarda le tendenze, non il singolo numero.
 
 ## Sistemi principali (per orientarsi in `game.js`)
 - **Stagione:** free agency (3 settimane), stagione regolare (20), playoff, Draft. Ogni "Avanza" è una settimana con 4 partite.
+- **Classifiche:** conference Est e Ovest (`EAST`, `confOf`, `confStandings`, `confRank`) e power ranking (`powerScore`, `powerSnapshot` salva la posizione della settimana prima). `t.last` tiene le ultime 10 partite.
+- **Playoff:** sono l'evento finale e si giocano nella loro schermata (`UI.openPlayoffs`). Play-in (7ª-10ª), poi serie al meglio delle 7 con fattore campo. Lo stato sta in `S.po` (serie, teste di serie, statistiche, campioni, MVP delle Finali). Si può guardare una partita in diretta con telecronaca (`UI.poWatch`, `playByPlay`), simulare la giornata, il turno o saltare fino al campione (`UI.poSim`). Gare 7 evidenziate, record dei playoff in `S.records.po` (`poRecGame`). Premi e reputazione a fine playoff in `poFinish`. Nei test e nei bot `UI.autoPo = true` fa simulare i playoff senza schermata.
 - **Soldi:** le commissioni sugli stipendi arrivano solo in stagione regolare (`weeklyIncomeIn(phase)`); gli sponsor arrivano tutto l'anno. In Home si mostra quanto entra questa settimana.
 - **Trattative con i giocatori:** incontro (`openChance`, `startTalk`, con l'opzione incontro di lusso `luxChance`), commissione dal 2 al 4%, bonus alla firma (quello in eccesso compensa fino a mezzo punto di commissione), promesse da mantenere.
 - **Trattative con le squadre:** forbice di valore, preferenze del giocatore, scadenze, asta e bluff, salary cap e apron.

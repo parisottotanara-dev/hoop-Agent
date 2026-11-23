@@ -9,7 +9,7 @@ const fs = require('fs');
   await pg.goto('file://' + require('path').resolve(__dirname, '..', 'index.html'));
   await pg.fill('#f-agent', 'T'); await pg.fill('#f-agency', 'Salva'); await pg.click('form button');
   await pg.waitForTimeout(1300);
-  await pg.evaluate(() => { Tutorial.end(); UI.showWeek = a => a && a(); for (let t = 0; t < 30; t++) { for (const e of [...S.inbox]) resolveEvent(e.id, 0); S.inbox = []; advance(); } UI.go('home'); });
+  await pg.evaluate(() => { Tutorial.end(); UI.showWeek = a => a && a(); UI.autoPo = true; for (let t = 0; t < 30; t++) { for (const e of [...S.inbox]) resolveEvent(e.id, 0); S.inbox = []; advance(); } UI.go('home'); });
   const hdr = await pg.evaluate(() => { const r = [...document.querySelectorAll('.top-row > *')].map(e => Math.round(e.getBoundingClientRect().right)); return { maxRight: Math.max(...r), vw: innerWidth }; });
   console.log('barra in alto su iPhone SE:', JSON.stringify(hdr));
   await pg.screenshot({ path: require('os').tmpdir() + '/hoop-hdr-se.png', clip: { x: 0, y: 0, width: 320, height: 120 } });

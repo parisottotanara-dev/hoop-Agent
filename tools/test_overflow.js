@@ -7,7 +7,7 @@ const { chromium, devices } = require('playwright');
   await pg.fill('#f-agent', 'T'); await pg.fill('#f-agency', 'Academy'); await pg.click('form button');
   await pg.waitForTimeout(1300);
   const r = await pg.evaluate(() => {
-    Tutorial.end(); UI.showWeek = a => a && a(); UI.showDraft = a => a && a();
+    Tutorial.end(); UI.showWeek = a => a && a(); UI.autoPo = true; UI.showDraft = a => a && a();
     const bad = [];
     const check = where => {
       const vw = innerWidth;

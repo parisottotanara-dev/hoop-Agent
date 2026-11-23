@@ -8,7 +8,7 @@ const { chromium, devices } = require('playwright');
   await pg.fill('#f-agent', 'T'); await pg.fill('#f-agency', 'Fasi'); await pg.click('form button');
   await pg.waitForTimeout(400);
   const r = await pg.evaluate(() => {
-    Tutorial.end(); UI.showWeek = a => a && a(); const bad = new Set(); let n = 0;
+    Tutorial.end(); UI.showWeek = a => a && a(); UI.autoPo = true; const bad = new Set(); let n = 0;
     for (let t = 0; t < 52; t++) {
       for (const e of [...S.inbox]) resolveEvent(e.id, 0); S.inbox = []; S.cash = 2e6;
       for (const tab of ['home', 'clients', 'market', 'league', 'staff']) { try { UI.tab = tab; UI.render(); n++; } catch (e) { bad.add(`${S.phase}${S.week} ${tab}: ${e.message}`); } }

@@ -8,7 +8,7 @@ const SEASONS = +process.argv[2] || 50;
   await pg.fill('#f-agent', 'T'); await pg.fill('#f-agency', 'Audit'); await pg.click('form button');
   await pg.waitForTimeout(500);
   await pg.evaluate(() => {
-    Tutorial.end(); UI.showWeek = a => a && a();
+    Tutorial.end(); UI.showWeek = a => a && a(); UI.autoPo = true;
     window.ISS = {}; window.issue = (k, ex) => { ISS[k] = ISS[k] || { n: 0, ex }; ISS[k].n++; };
     window.STATS = []; window.GEMS = 0; window.PROM = { kept: 0, broken: 0, made: 0, byType: {} };
     const oa = addNews; window.addNews = (t, c) => {
