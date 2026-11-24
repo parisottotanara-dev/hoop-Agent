@@ -21,7 +21,7 @@ Claude Code legge questo file da solo all'inizio di ogni sessione su questo prog
 | File | Cosa contiene |
 |---|---|
 | `index.html` | Pagina, ordine degli script, registrazione del service worker, contatore GoatCounter |
-| `style.css` | Tutto lo stile (tema scuro, arancione, font Bungee per i titoli "arcade") |
+| `style.css` | Tutto lo stile. In fondo c'è il tema "a riquadri" scelto dall'utente: ogni sezione nel suo riquadro, colori neutri, arancione solo su ciò che si tocca, niente scritte da sala giochi |
 | `names.js` | Squadre, sponsor, celebrità e star parodia (`STARS`, `CELEBS`, `TEAMS`…), più `RENAMED`, la mappa dei nomi cambiati |
 | `nations.js` | Nazionalità: nomi, città, frasi sulle origini (`NATIONS`, `STAR_NAT`, `CLUB_NAT`) |
 | `events.js`, `events_extra.js` | Gli oltre 110 imprevisti, compresi quelli rari e quelli dei prospetti |
@@ -37,7 +37,7 @@ Claude Code legge questo file da solo all'inizio di ogni sessione su questo prog
 **Ordine degli script** in `index.html` e in `tools/build_artifact.py`: names, nations, events, events_extra, traits, tuning, records_data, art, game. Se aggiungi un file JS, mettilo in tutti e due i posti e anche nella lista `APP` di `sw.js`.
 
 ## Regole da rispettare sempre
-1. **Ad ogni rilascio** cambia il numero di `CACHE` in `sw.js` (ora `hoop-agent-v39`), così i telefoni scaricano la versione nuova.
+1. **Ad ogni rilascio** cambia il numero di `CACHE` in `sw.js` (ora `hoop-agent-v40`), così i telefoni scaricano la versione nuova.
 2. **I salvataggi vecchi devono continuare a funzionare.**
    - Lo stato è l'oggetto globale `S`, salvato in localStorage con la chiave `SAVE_KEY = 'superAgenteNBA.save.v2'`. Non cambiare la chiave.
    - Ogni campo nuovo va gestito anche quando manca, nella riga `if (S) { ... }` in fondo a `game.js` e/o con valori predefiniti (`|| 0`).
@@ -54,6 +54,10 @@ Claude Code legge questo file da solo all'inizio di ogni sessione su questo prog
    - Lo zoom è disattivato. I campi di testo devono avere almeno 16 px, altrimenti iPhone ingrandisce da solo.
 7. **Le cifre** si inseriscono con i pulsanti − e + oppure scrivendole a mano. Usa la funzione `stepper()`.
 8. **Nomi parodia** con giochi di parole veri, non "aggiungi una o" (es. Wilt Ciambellano, Kyrie Eleison, Jalen Brunchson). Le celebrità non devono mai comparire negli imprevisti insieme a se stesse.
+
+## Grafica (scelta dall'utente il 24/11/2026)
+- **Riquadri** ben separati per ogni sezione (`.box`, `.card`, `.tile`), l'illustrazione del giocatore in Home resta.
+- **Poche informazioni per pagina**: il resto va dietro pulsanti che aprono finestre o sottosezioni (`UI.tile`, `.subnav` in Lega e Staff, linguette nella scheda giocatore, "Mostra altri" nel Mercato). Non riallungare le pagine.
 
 ## Come provare le modifiche
 Servono Node e Playwright (`require('playwright')`). Ogni script si lancia da solo, per esempio `node tools/test_phases.js`.
