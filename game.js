@@ -410,6 +410,14 @@ const upgradeCost = (lvl, k) => (UPGRADE_COSTS[k] || [60000, 220000, 750000, 250
 // costi fissi: staff, sede, accademia e gestione dei clienti (dal quarto in poi)
 // quanto aumentano le spese settimanali con un livello in più
 const ACADEMY_REP = 45;
+// reputazione che serve per il livello successivo: i professionisti migliori lavorano solo per agenzie con un nome
+const STAFF_REP = { office: [0, 10, 25, 40, 55], hq: [0, 20, 35, 50, 65], marketing: [0, 15, 30, 45, 60], legal: [0, 15, 30, 45, 60],
+  scout: [0, 0, 15, 30, 45], informer: [0, 10, 25, 40, 55], academy: [45, 50, 55, 62, 70], center: [40, 50, 60, 70, 80] };
+const staffRepReq = (k, lvl = S.staff[k] || 0) => (STAFF_REP[k] || [])[lvl] || 0;
+const STAFF_WHY = { office: 'i collaboratori bravi vogliono lavorare in un\'agenzia che conta', hq: 'i palazzi migliori non si affittano a chi non ha un nome',
+  marketing: 'le agenzie di comunicazione top scelgono clienti famosi', legal: 'gli studi legali migliori non lavorano per chiunque',
+  scout: 'gli osservatori più esperti vogliono un\'agenzia seria', informer: 'chi sa le cose le racconta solo a chi conta',
+  academy: 'le famiglie affidano i figli solo a un agente con un nome', center: 'medici e preparatori di alto livello vogliono un\'agenzia famosa' };
 const staffStep = k => ({ office: 4000, hq: 6000, academy: 12000, center: 25000 })[k] || 3000;
 const weeklyCost = () => 6000 + 3000 * (S.staff.scout + S.staff.legal + S.staff.marketing + (S.staff.informer || 0)) + 4000 * S.staff.office
   + 6000 * (S.staff.hq || 0) + 12000 * (S.staff.academy || 0) + 25000 * (S.staff.center || 0) + pstaffWeekly() + 1200 * Math.max(0, S.clients.length - 3);
@@ -844,11 +852,20 @@ function starPower(p) { return p.school ? Math.max(p.ovr, (p.ovr + p.pot) / 2) :
 function pitchCost(p) { return Math.round(Math.max(1500, (starPower(p) - 50) * 450) / 100) * 100; }
 // Probabilità che accetti di sedersi al tavolo: è qui che i campioni sono difficili
 // jet privato, cena in un resort, la famiglia ospite: è difficile dire di no
-const luxChance = p => { const o = openChance(p); return clamp(Math.min(o + 0.25, o * 2 + 0.05) + (hasTrait(p, 'vanitoso') || hasTrait(p, 'avido') ? 0.06 : 0), 0.05, 0.97); };
-function openChance(p) {
+const luxChance = p => { const o = openChance(p, 6); if (!o) return 0; return clamp(Math.min(o + 0.25, o * 2 + 0.05) + (hasTrait(p, 'vanitoso') || hasTrait(p, 'avido') ? 0.06 : 0), 0.05, 0.97); };
+// Reputazione che un giocatore pretende dal suo agente: i campioni parlano solo con i nomi grossi.
+// Il legame costruito con un prospetto e una sede che fa colpo abbassano l'asticella.
+function repNeeded(p) {
+  return clamp(Math.round((starPower(p) - 64) * 3.3 - (p.bond || 0) * 0.5 - (S.staff.hq || 0) * 2), 0, 95);
+}
+const REP_GAP_MAX = 14; // oltre questa distanza non ti risponde nemmeno
+function openChance(p, lux = 0) {
+  const gap = repNeeded(p) - lux - S.rep;
+  if (gap >= REP_GAP_MAX) return 0;
   let c = 0.55 + (S.rep - (starPower(p) - 55) * 1.6) / 80 + S.staff.marketing * 0.03 + (S.staff.hq || 0) * 0.04 + (p.bond || 0) / 150;
   if (p.agency) c -= 0.15;
   c -= p.refusals * 0.12;
+  if (gap > 0) c *= 1 - gap / REP_GAP_MAX; // sotto la sua soglia: più sei lontano, più è difficile
   return clamp(c, 0.03, 0.97);
 }
 const roundHalf = v => Math.round(v * 2) / 2;
@@ -878,6 +895,7 @@ function startTalk(pid, lux = false) {
   if (S.talks[pid]) return { ok: true };
   if (p.lastPitch === S.turn) return { msg: 'Ti ha già detto di no questa settimana. Riprova la prossima.', type: 'warn' };
   if (p.lockedUntil > S.season) return { msg: 'Non vuole più sentirti fino alla prossima stagione.', type: 'bad' };
+  if (!(lux ? luxChance(p) : openChance(p))) return { msg: `${p.name} non risponde nemmeno alle tue chiamate: lavora solo con agenti di reputazione ${repNeeded(p)} o più (tu hai ${Math.round(S.rep)}).`, type: 'bad' };
   const cost = lux ? luxCost(p) : pitchCost(p);
   if (S.cash < cost) return { msg: `Per organizzare l'incontro servono ${fmt$(cost)}.`, type: 'bad' };
   spend(cost); p.lastPitch = S.turn;
@@ -3157,7 +3175,7 @@ const UI = {
       </button>
       ${p.school ? `<div class="mk-bond"><small>Legame</small><div class="bar"><i style="width:${bond}%;background:${bond >= 70 ? 'var(--good)' : bond >= 30 ? 'var(--accent)' : 'var(--muted)'}"></i></div><b>${bond}</b></div>` : ''}
       ${intel || p.bondTip || deadline != null ? `<div class="mk-tags">${intel ? '<span class="tag intel">🕵️ soffiata sul potenziale</span>' : ''}${p.bondTip ? '<span class="tag hot">💬 vuole essere seguito</span>' : ''}${deadline != null ? `<span class="tag inj">⏳ ${esc(p.rivalWho || 'un rivale')}: ${rivalStage(p)[0]}${deadline > 1 ? `, ${deadline} sett.` : ''}</span>` : ''}</div>` : ''}
-      <div class="mk-foot"><span class="val">Valore ${ex ? '' : '~'}${fmtM(shownValue(p))}</span>
+      <div class="mk-foot"><span class="val">Valore ${ex ? '' : '~'}${fmtM(shownValue(p))}${repNeeded(p) > S.rep ? `<span class="mk-rep ${openChance(p) ? 'warn' : 'bad'}">${ic('lock')} vuole rep. ${repNeeded(p)}</span>` : ''}</span>
         <span class="mk-act">
           ${!ex && p.school ? `<button class="btn sm" onclick="UI.doScout(${p.id})" ${scoutsLeft() <= 0 ? 'disabled' : ''} title="Manda uno scout">${ic('eye')} Osserva ${fmt$(scoutCost(p))}</button>` : ''}
           ${p.school ? `<button class="btn sm" onclick="UI.doCultivate(${p.id})" ${p.lastBond === S.turn ? 'disabled' : ''} title="Costa ${fmt$(cultivateCost(p))}">🤝 Coltiva ${fmt$(cultivateCost(p))}</button>` : ''}
@@ -3261,14 +3279,15 @@ const UI = {
       return this.openModal(`
         <div class="tk-head">${avatarSVG(p, 64)}<div><h3>${esc(p.name)}</h3><p class="muted small">${p.pos} · ${p.age} anni · OVR ${exact(p) ? '' : '~'}${shownOvr(p)} · POT ${exact(p) ? '' : '~'}${shownPot(p)}<br>${p.agency ? '🔒 assistito da ' + esc(p.agency) : '🟢 senza agente'}${p.school ? ` · legame ${p.bond || 0}/100` : ''}</p></div></div>
         <p>Prima di tutto deve credere che tu possa rappresentarlo. Se accetta l'incontro, si apre una trattativa: tu offri, lui fa la sua controfferta.</p>
+        ${repNeeded(p) > S.rep ? `<div class="rep-need ${c ? 'warn' : 'bad'}">${ic('lock')}<span>Lavora con agenti di reputazione <b>${repNeeded(p)}</b> o più, tu hai <b>${Math.round(S.rep)}</b>. ${c ? 'Sei vicino: può darti una possibilità, ma è dura.' : luxChance(p) ? 'Con le chiamate normali non ti risponde: solo un incontro di lusso può fargli cambiare idea.' : 'Per ora non ti risponde nemmeno.'}${p.school ? ' Coltivare il legame abbassa le sue pretese.' : ''}</span></div>` : ''}
         <div class="tk-odds"><span>Probabilità che accetti di incontrarti</span><b class="${c > .6 ? 'good' : c > .3 ? 'warn' : 'bad'}">${Math.round(c * 100)}%</b></div>
         <p class="small muted">Organizzare l'incontro costa ${fmt$(cost)}. Contano la tua reputazione, il legame con lui e se ha già un agente.</p>
         ${blocked ? `<p class="bad">${blocked}</p>` : ''}
-        <div class="actions"><button class="btn primary" onclick="UI.doStartTalk(${pid})" ${blocked ? 'disabled' : ''}>Chiedi un incontro (${fmt$(cost)})</button>
+        <div class="actions"><button class="btn primary" onclick="UI.doStartTalk(${pid})" ${blocked || !c ? 'disabled' : ''}>Chiedi un incontro (${fmt$(cost)})</button>
         <button class="btn" onclick="UI.closeModal()">Annulla</button></div>
         <div class="lux"><b>Incontro di lusso</b><span class="small muted">Lo vai a prendere con un jet privato e lo porti a cena in un resort con la famiglia.</span>
           <div class="tk-odds"><span>Probabilità che accetti</span><b class="${luxChance(p) > .6 ? 'good' : luxChance(p) > .3 ? 'warn' : 'bad'}">${Math.round(luxChance(p) * 100)}%</b></div>
-          <button class="btn sm" onclick="UI.doStartTalk(${pid}, true)" ${blocked || S.cash < luxCost(p) ? 'disabled' : ''}>Organizza (${fmt$(luxCost(p))})</button></div>`);
+          <button class="btn sm" onclick="UI.doStartTalk(${pid}, true)" ${blocked || !luxChance(p) || S.cash < luxCost(p) ? 'disabled' : ''}>Organizza (${fmt$(luxCost(p))})</button></div>`);
     }
     const hearts = '<i class="pip"></i>'.repeat(Math.max(0, t.patience)) + '<i class="pip off"></i>'.repeat(Math.max(0, t.max - t.patience));
     const sug = { comm: Math.min(4, t.ask.comm + 0.5), bonus: Math.max(0, Math.round(t.ask.bonus * 0.8 / 5) * 5) };
@@ -3597,8 +3616,8 @@ const UI = {
         return `<div class="card"><h3>${s.icon} ${s.name}</h3><div class="muted small">${s.desc}</div>
           <p>${k === 'informer' ? `<b>${INFORMER_LV[lvl]}</b>` : `Livello <b>${lvl}</b> / 5`} ${'★'.repeat(lvl)}${'☆'.repeat(5 - lvl)}</p>
           ${lvl < 5 && net - staffStep(k) < 0 ? `<p class="small bad">Con questo livello andresti in perdita di ${fmt$(staffStep(k) - net)} a settimana.</p>` : ''}
-          ${k === 'academy' && !lvl && S.rep < ACADEMY_REP ? `<p class="small muted">Per aprirla serve una reputazione di almeno ${ACADEMY_REP}: le famiglie affidano i figli solo a un agente con un nome.</p>` : ''}
-          ${lvl < 5 ? `<button class="btn primary sm" onclick="UI.upgrade('${k}')" ${S.cash < cost || (k === 'academy' && !lvl && S.rep < ACADEMY_REP) ? 'disabled' : ''}>${k === 'informer' && !lvl ? 'Assumi' : k === 'center' && !lvl ? 'Costruiscilo' : 'Potenzia'} (${fmt$(cost)})</button>` : '<span class="good">Al massimo!</span>'}</div>`;
+          ${lvl < 5 && S.rep < staffRepReq(k) ? `<p class="small warn">${ic('lock', 'in')} Per il livello ${lvl + 1} serve una reputazione di almeno ${staffRepReq(k)} (tu hai ${Math.round(S.rep)}): ${STAFF_WHY[k]}.</p>` : ''}
+          ${lvl < 5 ? `<button class="btn primary sm" onclick="UI.upgrade('${k}')" ${S.cash < cost || S.rep < staffRepReq(k) ? 'disabled' : ''}>${k === 'informer' && !lvl ? 'Assumi' : k === 'center' && !lvl ? 'Costruiscilo' : 'Potenzia'} (${fmt$(cost)})</button>` : '<span class="good">Al massimo!</span>'}</div>`;
       }).join('')}</div>
       <h2>Banca</h2>
       <div class="card bank">${S.loan ? `<p>Prestito di <b>${fmt$(S.loan.amount)}</b> al ${S.loan.rate}% l'anno. Rata <b>${fmt$(S.loan.perWeek)}</b> a settimana. Debito che resta: <b>${fmt$((fixLoan(), S.loan.balance))}</b>.</p>
@@ -3619,7 +3638,7 @@ const UI = {
   doDonate() { const r = donate(); save(); this.render(); toast(r.msg, r.type); },
   upgrade(k) {
     const cost = upgradeCost(S.staff[k] || 0, k);
-    if (k === 'academy' && !S.staff.academy && S.rep < ACADEMY_REP) return toast(`Nessuna famiglia manda il figlio nell'accademia di un agente poco conosciuto: serve una reputazione di almeno ${ACADEMY_REP}.`, 'bad', 'Troppo presto');
+    if (S.rep < staffRepReq(k)) return toast(`Serve una reputazione di almeno ${staffRepReq(k)}: ${STAFF_WHY[k]}.`, 'bad', 'Troppo presto');
     if (S.cash < cost) return toast('Fondi insufficienti.', 'bad');
     spend(cost); S.staff[k] = (S.staff[k] || 0) + 1;
     toast(k === 'informer' ? (S.staff[k] === 1 ? 'Hai assunto un informatore. È ancora scarso, ma ti passerà le prime soffiate.' : `Il tuo informatore ora è: ${INFORMER_LV[S.staff[k]]}.`) : `${STAFF[k].name}: livello ${S.staff[k]}.`, 'good', 'Upgrade!');
@@ -3959,7 +3978,7 @@ const Tutorial = {
     { t: null, h: 'Benvenuto, agente!', x: 'Sono <b>Coach Gigi</b> e ti spiego come funziona. Sei un procuratore: trovi giocatori, li porti nella tua agenzia e guadagni una percentuale sui loro <b>stipendi</b> (1-4%) e sui loro <b>sponsor</b> (15%).' },
     { t: 't-adv', h: 'Avanza settimana', x: 'Ogni tocco fa passare una settimana: si giocano 4 partite, incassi le commissioni e paghi lo staff. Poi vedi i <b>risultati</b> dei tuoi giocatori con un voto da A+ a F. Se il pulsante diventa <b>giallo</b>, prima devi decidere un imprevisto. La stagione è: Free Agency → stagione regolare → playoff → Draft.' },
     { t: 't-cash', h: 'La tua cassa', x: 'Qui vedi i soldi e quanto guadagni o perdi questa settimana. Le commissioni sugli stipendi arrivano solo durante la stagione regolare: d\'estate le spese corrono e gli incassi no, quindi tieni da parte qualcosa. Ci paghi lo staff, gli incontri con i giocatori e i bonus alla firma. <b>Se resti in rosso per 4 settimane perdi la licenza!</b>' },
-    { t: 't-rep', h: 'La reputazione', x: 'Più è alta, più i campioni accettano di incontrarti. Sale con i contratti ricchi, i premi e le scelte azzeccate; scende con figuracce e clienti persi.' },
+    { t: 't-rep', h: 'La reputazione', x: 'È il tuo biglietto da visita. I giocatori forti parlano solo con agenti che hanno un nome: nel Mercato vedi quanta reputazione vuole ognuno. Serve anche per far crescere l\'agenzia: uffici più grandi, sede, accademia. Sale con i contratti ricchi, i premi e le scelte azzeccate; scende con figuracce e clienti persi.' },
     { t: 't-cl', h: 'I posti in agenzia', x: 'Puoi seguire un numero limitato di clienti. Per averne di più, amplia gli <b>Uffici</b> nella scheda Staff.' },
     { t: 't-ev', h: 'Gli imprevisti', x: 'Ogni tanto qualcuno dei tuoi ne combina una, o arriva una proposta strana. Sotto ogni scelta vedi cosa succede e con che probabilità. Alcune scelte cambiano anche l\'aspetto del giocatore. Più raramente arriva un <b>⚡ colpo di scena</b> che può cambiare una carriera, in bene o in male.' },
     { t: 't-pls', h: 'I tuoi giocatori', x: 'Per ognuno vedi la <b>prossima partita</b>, la posizione in classifica della squadra, le medie di punti, rimbalzi e assist e il <b>voto dell\'ultima gara</b>. Tocca un giocatore per aprire la sua scheda: lì trovi carattere, storia e il pulsante <b>Consiglia</b>.' },

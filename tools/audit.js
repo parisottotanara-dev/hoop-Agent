@@ -87,7 +87,7 @@ const SEASONS = +process.argv[2] || 50;
         for (const e of [...S.inbox]) { const d = EVENTS.find(x => x.id === e.ev); if (!d) { issue('imprevisto sconosciuto', e.ev); S.inbox = S.inbox.filter(x => x !== e); continue; }
           resolveEvent(e.id, Math.floor(Math.random() * d.choices.length)); if (S.inbox.includes(e)) { S.cash += 300000; resolveEvent(e.id, Math.floor(Math.random() * d.choices.length)); } if (S.inbox.includes(e)) { issue('imprevisto che non si chiude', e.ev); S.inbox = S.inbox.filter(x => x !== e); } }
         for (const p of clients()) if (p.age <= 25 && p.campSeason !== S.season && S.cash > 800000) legendCamp(p.id, 1);
-        for (const k of ['office', 'hq', 'academy', 'marketing', 'legal', 'scout', 'informer']) if ((S.staff[k] || 0) < 5 && S.cash > upgradeCost(S.staff[k] || 0, k) * 2.5 && weeklyIncomeEstimate() > weeklyCost() * 1.4 + 6000) { spend(upgradeCost(S.staff[k] || 0, k)); S.staff[k] = (S.staff[k] || 0) + 1; }
+        for (const k of ['office', 'hq', 'academy', 'marketing', 'legal', 'scout', 'informer']) if ((S.staff[k] || 0) < 5 && S.rep >= staffRepReq(k) && S.cash > upgradeCost(S.staff[k] || 0, k) * 2.5 && weeklyIncomeEstimate() > weeklyCost() * 1.4 + 6000) { spend(upgradeCost(S.staff[k] || 0, k)); S.staff[k] = (S.staff[k] || 0) + 1; }
         for (const p of clients()) if (p.lastContact !== S.turn && p.morale < 55) giveGift(p.id, S.cash > 20e6 ? 2 : S.cash > 2e6 ? 1 : 0);
         if (S.cash > 25e6) { const t = [...S.teams].sort((x, y) => stakeOf(y.id) - stakeOf(x.id))[0]; buyStake(stakeOf(t.id) && stakeOf(t.id) < 100 ? t.id : S.teams.filter(x => stakeOf(x.id) < 100)[0].id); }
         if (S.cash > 3e6 && S.rep < 98) donate();
