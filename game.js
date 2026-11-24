@@ -3151,7 +3151,7 @@ const UI = {
       </div>
       ${full ? '<div class="note warn">Hai raggiunto il limite di clienti: amplia gli <b>Uffici</b> nella scheda Staff.</div>' : ''}
       ${pros ? this.intelBox() : ''}
-      <p class="small muted">${pros ? 'Le valutazioni dei prospetti sono stime (~). <b>🔭 Osserva</b> per vederli meglio (i tuoi scout possono seguirne ${SCOUT_MAX} a settimana, questa settimana ne restano ${scoutsLeft()}), <b>🤝 Coltiva</b> per creare un legame prima del Draft: chi ti è legato accetta più facilmente e a volte sceglie te da solo. Occhio alle agenzie rivali: più si avvicina il Draft, più corteggiano i migliori, e solo un legame forte li tiene lontani.' :
+      <p class="small muted">${pros ? `Le valutazioni dei prospetti sono stime (~). <b>🔭 Osserva</b> per vederli meglio (i tuoi scout possono seguirne ${SCOUT_MAX} a settimana, questa settimana ne restano ${scoutsLeft()}), <b>🤝 Coltiva</b> per creare un legame prima del Draft: chi ti è legato accetta più facilmente e a volte sceglie te da solo. Occhio alle agenzie rivali: più si avvicina il Draft, più corteggiano i migliori, e solo un legame forte li tiene lontani.` :
         this.mkt === 'fa' ? 'I free agent firmati in Free Agency ricevono subito offerte dalle squadre.' : 'Strappare un giocatore a un\'agenzia rivale è più difficile.'}</p>
       ${groups.filter(g => g[2].length).map(([h, sub, g, cls]) => `
         <section class="mk-group">
