@@ -824,3 +824,5 @@ a.tlink { color: inherit; text-decoration: underline; text-decoration-color: var
 .tm-o { display: grid; justify-items: center; flex: none; }
 .tm-o small { font-size: 10px; color: var(--muted); }
 .tm-o b { font-family: var(--arcade); font-size: 18px; font-weight: 400; }
+.rv-st { display: inline-block; font-size: 11px; font-weight: 700; line-height: 1; padding: 3px 6px 2px; border-radius: 999px; border: 1px solid; vertical-align: 1px; }
+.rv-st.l { color: #8fd18f; border-color: #3d6b3d; } .rv-st.m { color: #f0c674; border-color: #8a6a1d; } .rv-st.h { color: #ff9b94; border-color: var(--bad); }

@@ -3,7 +3,7 @@
    senza internet si gioca con la copia salvata sul telefono. */
 'use strict';
 
-const CACHE = 'hoop-agent-v35';
+const CACHE = 'hoop-agent-v36';
 const APP = [
   './', './index.html', './style.css', './manifest.webmanifest',
   './names.js', './nations.js', './events.js', './events_extra.js', './traits.js', './tuning.js', './records_data.js', './art.js', './game.js',

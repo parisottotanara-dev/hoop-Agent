@@ -948,7 +948,8 @@ function talkSign(pid, comm, bonus, promises = []) {
   if (clients().length >= capacity()) return { msg: 'Non hai più posti in agenzia.', type: 'bad', done: true };
   if (bonus) spend(bonus * 1000);
   p.comm = comm; p.agency = S.agency; p.morale = clamp(60 + Math.round((p.bond || 0) / 4) + (bonus ? 8 : 0), 0, 100); p.scouted = true;
-  S.clients.push(p.id);
+  p.rivalDeadline = null; p.bondTip = false;
+  S.clients.push(p.id); pruneIntel();
   changeRep(clamp((p.ovr - 60) / 15, 0.1, 2));
   // promesse da mantenere entro fine stagione regolare
   // promessa fatta tardi (dopo metà stagione regolare): c'è tempo fino alla fine della prossima
@@ -1332,6 +1333,7 @@ function lose(p) {
   if (S.chal) for (const c of S.chal.list) if (c.id === 'loyal' && !c.done) c.failed = true;
   S.clients = S.clients.filter(id => id !== p.id);
   S.offers = S.offers.filter(o => o.pid !== p.id);
+  S.inbox = S.inbox.filter(e => e.pid !== p.id);
   p.agency = pick(RIVALS); p.lockedUntil = S.season + 2;
   changeRep(-clamp((p.ovr - 60) / 8, 0.5, 4));
   addNews(`💔 Hai perso ${esc(p.name)}, passato a un'agenzia rivale.`, 'bad');
@@ -1502,13 +1504,13 @@ function informerWeek() {
   const p = ranked[randi(0, Math.min(9, ranked.length - 1))];
   const sd = Math.max(1.5, 9 - lv * 1.6);
   const r = Math.random();
-  let text;
-  if (r < 0.25 && !p.bondTip) {
-    p.bondTip = true;
+  let text, type = 'pot';
+  if (r < 0.25 && !p.bondTip && !p.agency) {
+    p.bondTip = true; type = 'bond';
     text = `${p.name} (${p.school}) cerca un agente che lo segua da vicino: se lo coltivi ora, il legame crescerà il doppio.`;
   } else if (r < 0.45 && !p.agency && p.rivalDeadline == null) {
-    p.rivalDeadline = S.turn + 3; p.rivalWho = pick(RIVALS);
-    text = `${p.rivalWho} sta per far firmare ${p.name} (${p.school}). Hai 3 settimane per convincerlo.`;
+    p.rivalDeadline = S.turn + randi(2, 5); p.rivalWho = pick(RIVALS); type = 'rival';
+    text = intelText({ type, pid: p.id });
   } else {
     let est = Math.round(p.pot + gauss() * sd);
     if (lv <= 2 && chance(0.3 - lv * 0.1)) est += pick([-1, 1]) * randi(5, 10); // l'informatore scarso a volte prende cantonate
@@ -1516,8 +1518,8 @@ function informerWeek() {
     if (p.intelSd == null || sd <= p.intelSd) { p.intelPot = est; p.intelSd = sd; }
     text = `${p.name} (${p.school}): secondo me il suo potenziale è ~${est}.`;
   }
-  S.intel.unshift({ when: `${seasonLabel()} · ${phaseLabel()}`, pid: p.id, text, lv });
-  if (S.intel.length > 20) S.intel.length = 20;
+  S.intel.unshift({ when: `${seasonLabel()} · ${phaseLabel()}`, pid: p.id, text, lv, type });
+  pruneIntel();
   addNews(`🕵️ Soffiata dell'informatore: ${esc(text)}`);
   UI.pendingToast = UI.pendingToast || [text, 'intel'];
 }
@@ -1542,6 +1544,31 @@ function rivalCourtWeek() {
     if (mine || i < 10) UI.pendingToast = UI.pendingToast || [`${p.rivalWho} vuole ${p.name}: hai ${weeks} settimane per convincerlo.`, 'warn', 'Concorrenza!'];
   }
 }
+// a che punto è un rivale con un prospetto: dipende da quante settimane mancano alla firma
+function rivalStage(p) {
+  const w = p.rivalDeadline - S.turn;
+  return w >= 4 ? ['ancora agli inizi', 'l'] : w >= 2 ? ['in contatto ravvicinato', 'm'] : ['questione di firme', 'h'];
+}
+function intelText(r) {
+  const p = S.players[r.pid];
+  if (r.type === 'rival' && p.rivalDeadline != null) {
+    const w = p.rivalDeadline - S.turn, st = rivalStage(p)[0];
+    return `${p.rivalWho} è ${st === 'questione di firme' ? 'a un passo da' : st === 'ancora agli inizi' ? 'ancora agli inizi con' : 'in contatto ravvicinato con'} ${p.name} (${p.school}). ${w <= 1 ? 'È questione di firme: hai questa settimana per convincerlo.' : `Hai ${w} settimane per convincerlo.`}`;
+  }
+  return r.text;
+}
+// le soffiate scadono: via quelle su chi hai già preso, chi ha firmato con altri, chi è già stato scelto al Draft
+function intelValid(r) {
+  const p = S.players[r.pid];
+  if (!p || p.retired || !p.school || isClient(p)) return false;
+  if (r.type === 'rival') return !p.agency && p.rivalDeadline != null && S.turn < p.rivalDeadline;
+  if (r.type === 'bond') return !p.agency && !!p.bondTip;
+  return true;
+}
+function pruneIntel() {
+  for (const r of S.intel || []) if (!r.type) r.type = /sta per far firmare/.test(r.text) ? 'rival' : /cerca un agente/.test(r.text) ? 'bond' : 'pot'; // soffiate dei salvataggi vecchi
+  S.intel = (S.intel || []).filter(intelValid).slice(0, 20);
+}
 function rivalDeadlines() {
   for (const p of Object.values(S.players)) {
     if (p.rivalDeadline == null || S.turn < p.rivalDeadline) continue;
@@ -1549,8 +1576,9 @@ function rivalDeadlines() {
       // chi ti è legato resiste: con un legame forte non cede mai, con uno medio a volte dice di no
       const b = p.bond || 0;
       if (b < 60 && chance(0.85 - b / 100)) {
-        p.agency = p.rivalWho;
-        addNews(`🦈 ${esc(p.rivalWho)} ha fatto firmare ${esc(p.name)} prima di te.`, b > 0 ? 'bad' : '');
+        p.agency = p.rivalWho; p.bondTip = false;
+        const talk = !!S.talks[p.id]; delete S.talks[p.id];
+        addNews(`🦈 ${esc(p.rivalWho)} ha fatto firmare ${esc(p.name)} prima di te${talk ? ': la vostra trattativa salta' : ''}.`, b > 0 || talk ? 'bad' : '');
       } else {
         if (b > 0) p.bond = clamp(b + 5, 0, 100);
         addNews(`💪 ${esc(p.name)} ha detto no a ${esc(p.rivalWho)}${b >= 30 ? ': aspetta te' : ''}.`, b >= 30 ? 'good' : '');
@@ -1558,6 +1586,7 @@ function rivalDeadlines() {
     }
     p.rivalDeadline = null;
   }
+  pruneIntel();
 }
 const cultivateCost = p => Math.round(Math.max(1000, (starPower(p) - 50) * 180) / 100) * 100;
 function cultivate(pid) {
@@ -1581,7 +1610,8 @@ function bondedJoin() {
     if (clients().length >= capacity()) break;
     if (!chance(0.35 + (p.bond - 70) / 60)) continue;
     p.comm = 3; p.agency = S.agency; p.morale = clamp(60 + Math.round(p.bond / 3), 0, 100); p.scouted = true;
-    S.clients.push(p.id);
+    p.rivalDeadline = null; p.bondTip = false;
+    S.clients.push(p.id); pruneIntel();
     chalUpdate('sign', p.ovr, 'max');
     addNews(`🤝 <b>${esc(p.name)}</b> ti ha scelto come agente prima del Draft, grazie al legame che avete costruito!`, 'good');
     UI.pendingToast = [`${p.name} ti ha scelto come agente prima del Draft!`, 'good'];
@@ -3105,7 +3135,7 @@ const UI = {
         <span class="mk-rat"><span><small>OVR</small><b>${ex ? '' : '~'}${shownOvr(p)}</b></span><span><small>POT</small><b class="pot">${ex ? '' : '~'}${shownPot(p)}</b></span></span>
       </button>
       ${p.school ? `<div class="mk-bond"><small>Legame</small><div class="bar"><i style="width:${bond}%;background:${bond >= 70 ? 'var(--good)' : bond >= 30 ? 'var(--accent)' : 'var(--muted)'}"></i></div><b>${bond}</b></div>` : ''}
-      ${intel || p.bondTip || deadline != null ? `<div class="mk-tags">${intel ? '<span class="tag intel">🕵️ soffiata sul potenziale</span>' : ''}${p.bondTip ? '<span class="tag hot">💬 vuole essere seguito</span>' : ''}${deadline != null ? `<span class="tag inj">⏳ un rivale lo firma tra ${Math.max(0, deadline)} sett.</span>` : ''}</div>` : ''}
+      ${intel || p.bondTip || deadline != null ? `<div class="mk-tags">${intel ? '<span class="tag intel">🕵️ soffiata sul potenziale</span>' : ''}${p.bondTip ? '<span class="tag hot">💬 vuole essere seguito</span>' : ''}${deadline != null ? `<span class="tag inj">⏳ ${esc(p.rivalWho || 'un rivale')}: ${rivalStage(p)[0]}${deadline > 1 ? `, ${deadline} sett.` : ''}</span>` : ''}</div>` : ''}
       <div class="mk-foot"><span class="val">Valore ${ex ? '' : '~'}${fmtM(shownValue(p))}</span>
         <span class="mk-act">
           ${!ex && p.school ? `<button class="btn sm" onclick="UI.doScout(${p.id})" ${scoutsLeft() <= 0 ? 'disabled' : ''} title="Manda uno scout">${ic('eye')} Osserva ${fmt$(scoutCost(p))}</button>` : ''}
@@ -3119,7 +3149,8 @@ const UI = {
     if (!lv) return `<div class="intel-box"><div class="ib-head"><span>${ic('eye')}</span><div><b>Nessun informatore</b><small>Assumine uno nella scheda Staff: durante l'anno ti passerà soffiate sui prospetti del prossimo Draft.</small></div>
       <button class="btn sm" onclick="UI.go('staff')">Assumi</button></div></div>`;
     return `<div class="intel-box"><div class="ib-head"><span>${ic('eye')}</span><div><b>Il tuo informatore · ${INFORMER_LV[lv]}</b><small>${lv <= 2 ? 'È ancora alle prime armi: a volte sbaglia. Potenzialo nella scheda Staff.' : 'Le sue soffiate sono affidabili.'}</small></div></div>
-      ${S.intel.length ? `<ul>${S.intel.slice(0, 4).map(r => `<li><a href="#" onclick="UI.player(${r.pid});return false">${esc(r.text)}</a><small>${esc(r.when)}</small></li>`).join('')}</ul>` : '<p class="small muted">Ancora nessuna soffiata: arriveranno nelle prossime settimane.</p>'}</div>`;
+      ${(pruneIntel(), S.intel.length) ? `<ul>${[...S.intel].sort((a, b) => (a.type === 'rival' ? S.players[a.pid].rivalDeadline - S.turn : 99) - (b.type === 'rival' ? S.players[b.pid].rivalDeadline - S.turn : 99)).slice(0, 4).map(r => { const p = S.players[r.pid], st = r.type === 'rival' ? rivalStage(p) : null;
+        return `<li><a href="#" onclick="UI.player(${r.pid});return false">${st ? `<span class="rv-st ${st[1]}">${st[0]}</span> ` : ''}${esc(intelText(r))}</a><small>${esc(r.when)}</small></li>`; }).join('')}</ul>` : '<p class="small muted">Nessuna soffiata in corso: le prossime arriveranno nelle prossime settimane.</p>'}</div>`;
   },
   doCultivate(pid) { const r = cultivate(pid); toast(r.msg, r.type); save(); this.render(); },
   doScout(pid) { const m = scout(pid); toast(m + (P(pid).scouted && /^Rapporto/.test(m) ? ` Osservazioni rimaste questa settimana: ${scoutsLeft()}.` : ''), 'intel', 'Rapporto scout'); save(); this.render(); },
@@ -3979,6 +4010,6 @@ const Tutorial = {
 };
 
 load();
-if (S) { for (const p of Object.values(S.players)) { if (p.appeal == null) p.appeal = newAppeal(); if (!p.nat) p.nat = inferNat(p); } S.teamRel = S.teamRel || {}; S.brandRel = S.brandRel || {}; recInit(); S.staff.hq = S.staff.hq || 0; S.staff.academy = S.staff.academy || 0; if (!S.chal || S.chal.season !== S.season) newChallenges(); for (const p of Object.values(S.players)) capPot(p); S.goalRewards = S.goalRewards || {}; for (const k of Object.keys(S.goals || {})) if (!S.goalRewards[k]) { const t = giveReward(k); if (t) addNews(`🎁 Ricompensa per un obiettivo già raggiunto (${esc(GOALS.find(x => x[0] === k)[1])}): ${esc(t)}.`, 'gold'); } for (const p of Object.values(S.players)) if (!p.traits) p.traits = genTraits(); S.talks = S.talks || {}; S.staff.informer = S.staff.informer || 0; S.intel = S.intel || []; S.recentEv = S.recentEv || []; S.teamRel = S.teamRel || {}; S.brandRel = S.brandRel || {}; S.inbox = (S.inbox || []).filter(e => e.ev && e.data && e.data.mult); }
+if (S) { for (const p of Object.values(S.players)) { if (p.appeal == null) p.appeal = newAppeal(); if (!p.nat) p.nat = inferNat(p); } S.teamRel = S.teamRel || {}; S.brandRel = S.brandRel || {}; recInit(); S.staff.hq = S.staff.hq || 0; S.staff.academy = S.staff.academy || 0; if (!S.chal || S.chal.season !== S.season) newChallenges(); for (const p of Object.values(S.players)) capPot(p); S.goalRewards = S.goalRewards || {}; for (const k of Object.keys(S.goals || {})) if (!S.goalRewards[k]) { const t = giveReward(k); if (t) addNews(`🎁 Ricompensa per un obiettivo già raggiunto (${esc(GOALS.find(x => x[0] === k)[1])}): ${esc(t)}.`, 'gold'); } for (const p of Object.values(S.players)) if (!p.traits) p.traits = genTraits(); S.talks = S.talks || {}; S.staff.informer = S.staff.informer || 0; S.intel = S.intel || []; pruneIntel(); S.recentEv = S.recentEv || []; S.teamRel = S.teamRel || {}; S.brandRel = S.brandRel || {}; S.inbox = (S.inbox || []).filter(e => e.ev && e.data && e.data.mult); }
 UI.render();
 Cloud.init();
