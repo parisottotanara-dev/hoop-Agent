@@ -37,7 +37,7 @@ const fs = require('fs');
   await pg.click('text=Hai un salvataggio? Caricalo');
   await pg.setInputFiles('input[type=file]', path); await pg.waitForTimeout(1500);
   console.log('dopo il file:', await pg.evaluate(() => S ? `${S.agency} stagione ${S.season}, ${S.clients.length} clienti` : 'niente'));
-  await pg.evaluate(() => { UI.go('home'); document.querySelector('.savebox').scrollIntoView(); });
+  await pg.evaluate(() => { UI.go('home'); UI.settingsModal(); document.querySelector('.savebox').scrollIntoView(); });
   await pg.screenshot({ path: require('os').tmpdir() + '/hoop-savebox.png' });
   console.log('errori', errs);
   await b.close();

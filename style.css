@@ -834,3 +834,188 @@ a.tlink { color: inherit; text-decoration: underline; text-decoration-color: var
 .rep-need { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 8px 10px; border-radius: 10px; margin: 8px 0; border: 1px solid; }
 .rep-need .ic { width: 16px; height: 16px; flex: none; margin-top: 2px; }
 .rep-need.bad { border-color: var(--bad); background: #f8514914; } .rep-need.warn { border-color: var(--warn); background: #d299221a; }
+
+/* =====================================================================
+   Tema "a riquadri": ogni cosa nel suo riquadro, poche informazioni per pagina,
+   il resto dietro pulsanti. Colori neutri, arancione solo dove si tocca.
+   ===================================================================== */
+:root { --bg: #0b0b0d; --panel: #17171b; --panel2: #232329; --line: #2a2a31; --text: #f4f4f5; --muted: #9d9da7;
+  --accent: #ff7a1a; --accent2: #ff9a4d; --good: #4ade80; --bad: #f87171; --warn: #fbbf24; --blue: #7dd3fc; --gold: #fbbf24; }
+/* ===== Pulizia comune a tutte le proposte: meno riquadri, meno colori, meno righe secondarie ===== */
+:root { --arcade: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; --r: 16px; }
+html, body { font-size: 15px; letter-spacing: -0.005em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; margin: 26px 0 10px; }
+.sec h2 { font-size: 13px; }
+h3 { font-weight: 650; }
+
+/* barra in alto */
+header.top { background: var(--bg) !important; border-bottom: 1px solid var(--line); backdrop-filter: none; }
+.brand { font-size: 16px; font-weight: 700; } .brand .ic.logo { display: none; }
+.cash-pill { background: none !important; border: 0 !important; font-weight: 700; padding: 0 4px; }
+.btn.help { background: none !important; border: 0 !important; }
+#t-adv, #t-adv.blocked { font-family: inherit !important; text-transform: none !important; letter-spacing: 0 !important; font-weight: 650 !important; font-size: 15px !important;
+  box-shadow: none !important; border-radius: 12px !important; transform: none !important; }
+#t-adv.blocked { background: var(--warn) !important; border-color: var(--warn) !important; color: #111 !important; }
+nav.tabs button { font-size: 11px !important; }
+nav.tabs button.on { border-bottom-color: transparent !important; color: var(--accent) !important; }
+
+/* pulsanti */
+.btn { border-radius: 10px; box-shadow: none !important; }
+.btn.sm:not(.primary) { background: transparent; border-color: var(--line); }
+.btn.primary { color: #fff; }
+
+/* Home: niente illustrazione grande, intestazione in testo */
+.chip .stars { display: none; }
+
+/* imprevisti */
+.ev { background: var(--panel) !important; border: 1px solid var(--line) !important; border-radius: var(--r) !important; box-shadow: none !important; }
+.ev p { color: var(--muted) !important; }
+.ev-ico { background: none !important; border: 0 !important; width: 32px !important; height: 32px !important; }
+.choices button { background: var(--bg) !important; border: 1px solid var(--line) !important; border-radius: 12px !important; }
+.choices button small { color: var(--muted) !important; }
+[class*="hazard"], .decide-bar, .must { background: none !important; }
+
+/* giocatori in Home: solo l'essenziale */
+.pl { border: 0 !important; border-radius: 0 !important; background: none !important; padding: 12px 0 !important; border-bottom: 1px solid var(--line) !important; }
+.pl-stats, .pl-last small { display: none !important; }
+.pl-meta { color: var(--muted) !important; font-size: 12.5px !important; }
+.pl-meta b { color: var(--text); font-weight: 500; }
+.pl-name .ov, .fig .ov { border: 0 !important; background: var(--panel2) !important; color: var(--text) !important; border-radius: 6px !important; padding: 1px 6px !important; }
+.grade, .grade.big { font-family: inherit !important; font-weight: 700 !important; font-size: 13px !important; min-width: 30px !important; padding: 5px 6px !important;
+  border-radius: 8px !important; box-shadow: none !important; border: 0 !important; }
+.grade.ga { background: color-mix(in srgb, var(--good) 22%, transparent) !important; color: var(--good) !important; }
+.grade.gb { background: color-mix(in srgb, var(--blue) 22%, transparent) !important; color: var(--blue) !important; }
+.grade.gc { background: color-mix(in srgb, var(--warn) 22%, transparent) !important; color: var(--warn) !important; }
+.grade.gd { background: color-mix(in srgb, var(--bad) 22%, transparent) !important; color: var(--bad) !important; }
+
+/* notizie */
+.item i { opacity: .6; }
+
+/* schede: niente bordi doppi, info secondarie nascoste */
+.card { border: 0 !important; border-radius: var(--r) !important; background: var(--panel) !important; }
+.traits .trait, .trait { background: none !important; border: 0 !important; padding: 0 8px 0 0 !important; color: var(--muted) !important; font-size: 12.5px !important; }
+.ovr { border-width: 0 !important; background: var(--panel2) !important; color: var(--text) !important; border-radius: 12px !important; }
+.card .actions .btn.sm { border: 0; background: var(--panel2); }
+.bar { height: 4px; }
+
+/* Mercato */
+.mk { border: 0 !important; border-left: 0 !important; border-radius: var(--r) !important; background: var(--panel) !important; gap: 8px !important; }
+.mk-info .ti, .mk-bond { display: none !important; }
+.mk-rat > span { background: none !important; border: 0 !important; padding: 0 4px !important; min-width: 36px !important; }
+.mk-rat .pot { color: var(--muted) !important; }
+.mk-foot .btn.sm:not(.primary) { border: 0; background: var(--panel2); }
+.intel-box { background: var(--panel) !important; border: 0 !important; }
+.intel-box li { background: var(--bg) !important; }
+.mk-head h3 span { background: none !important; }
+.filters input, .filters select { border-radius: 10px; }
+.seg { border-radius: 10px; }
+.seg button.on { color: #fff; }
+
+/* tabelle */
+.tbl-wrap { border: 0 !important; border-radius: var(--r) !important; background: var(--panel); }
+th { background: transparent !important; text-transform: uppercase; font-size: 10.5px !important; letter-spacing: .06em; }
+tr.mine td { background: color-mix(in srgb, var(--accent) 10%, transparent) !important; }
+
+/* finestre */
+.modal-box { border: 0 !important; border-radius: 20px !important; }
+.story { background: none !important; border-left: 2px solid var(--line) !important; color: var(--muted) !important; font-size: 13.5px !important; }
+.tk-odds { border: 0 !important; }
+.tk-odds b { font-family: inherit !important; font-weight: 700 !important; }
+.lux { border: 0 !important; background: var(--panel2) !important; }
+.tk-ask { background: var(--panel2) !important; border: 0 !important; }
+
+/* avvisi: niente stile da cabinato */
+.toast.arc { background: var(--panel) !important; border: 1px solid var(--line) !important; box-shadow: 0 8px 30px rgba(0,0,0,.35) !important; border-radius: 14px !important; }
+.toast.arc b { font-family: inherit !important; text-transform: none !important; letter-spacing: 0 !important; text-shadow: none !important; color: var(--text) !important; font-weight: 700; }
+.toast.arc span { color: var(--muted) !important; }
+
+/* playoff */
+.po-title { font-family: inherit !important; text-shadow: none !important; text-transform: none !important; color: var(--text) !important; font-weight: 750; }
+.po-ch { font-family: inherit !important; }
+.po-chip { font-family: inherit !important; font-weight: 750; border-bottom-width: 0 !important; border-radius: 6px; }
+.po-game, .po-s, .po-res { background: var(--panel) !important; }
+.po-game:not(.mine):not(.g7), .po-s:not(.mine), .po-res:not(.mine) { border-color: var(--line) !important; }
+.po-t b, .po-t .wn, .po-sc b { font-family: inherit !important; font-weight: 750 !important; }
+.must { background: none !important; border: 0 !important; box-shadow: none !important; color: var(--warn) !important; font-family: inherit !important; text-transform: none !important;
+  letter-spacing: 0 !important; font-size: 13px !important; padding: 0 !important; margin: 0 0 8px !important; text-shadow: none !important; }
+.must .ic { color: var(--warn); }
+/* meno cose in vista: le azioni secondarie restano nella scheda del giocatore, i consigli lunghi nel tutorial */
+
+.btn.primary, .seg button.on { color: #111 !important; }
+.hero { border-radius: 20px !important; border: 0 !important; }
+.hero-tag { font-family: inherit; }
+.chips { gap: 8px !important; }
+.chip { border: 0 !important; background: var(--panel) !important; border-radius: 16px !important; }
+
+/* riquadri delle sezioni */
+.box { background: var(--panel); border-radius: 20px; padding: 14px; margin: 12px 0; }
+.box-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.box-h h2 { margin: 0; color: var(--text); font-size: 13px; }
+.box-h a { font-size: 13px; color: var(--accent2); font-weight: 600; }
+.pill { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+.pill.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.box .ev { background: var(--panel2) !important; border: 0 !important; }
+.box .choices button { background: var(--panel) !important; border: 0 !important; }
+.box .ev.calm { background: var(--panel2) !important; }
+.rowlist { display: grid; }
+.rowlist .pl { padding: 11px 2px !important; }
+.rowlist > :last-child { border-bottom: 0 !important; }
+.row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); color: var(--text); padding: 10px 2px; }
+.row-t { flex: 1; min-width: 0; display: grid; } .row-t small { color: var(--muted); font-size: 12px; }
+.go { color: var(--accent2); font-weight: 600; font-size: 13px; flex: none; }
+.add-row { width: 100%; margin-top: 10px; background: var(--panel2) !important; border: 0 !important; color: var(--muted) !important; }
+.box .feed { gap: 0; }
+.box .item { background: none !important; border: 0 !important; border-bottom: 1px solid var(--line) !important; border-radius: 0 !important; padding: 10px 0 !important; }
+.box .item:last-child { border-bottom: 0 !important; }
+.modal .item { background: var(--panel2) !important; border: 0 !important; }
+
+/* pulsanti che portano altrove */
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0 24px; }
+.tile { display: flex; align-items: center; gap: 10px; text-align: left; background: var(--panel); border: 0; border-radius: 18px; padding: 13px 12px; color: var(--text); width: 100%; margin: 0 0 10px; min-width: 0; }
+.tiles .tile { margin: 0; flex-direction: column; align-items: flex-start; gap: 8px; }
+.tiles .tile .go { display: none; }
+.tile-ic { width: 34px; height: 34px; border-radius: 10px; background: var(--panel2); display: grid; place-items: center; flex: none; color: var(--accent2); }
+.tile-ic .ic { width: 18px; height: 18px; }
+.tile-t { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.tile-t b { font-size: 14px; } .tile-t small { color: var(--muted); font-size: 12px; }
+
+/* sottosezioni (Lega, Staff) */
+.subnav { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 4px 0 14px; }
+.subnav.three { grid-template-columns: repeat(3, 1fr); }
+.subnav button { display: grid; justify-items: center; gap: 4px; background: var(--panel); border: 0; border-radius: 14px; padding: 10px 2px; color: var(--muted); font-size: 11.5px; min-width: 0; }
+.subnav button .ic { width: 18px; height: 18px; }
+.subnav button.on { background: var(--panel2); color: var(--text); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.subnav button span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+/* clienti */
+.cc { display: grid; gap: 10px; padding: 14px !important; }
+.cc-head { display: flex; align-items: center; gap: 12px; background: none; border: 0; color: var(--text); padding: 0; text-align: left; width: 100%; }
+.cc-t { flex: 1; min-width: 0; display: grid; gap: 2px; } .cc-t b { font-size: 16px; } .cc-t small { color: var(--muted); font-size: 12.5px; }
+.cc-head .ovr { min-width: 44px; height: 44px; font-size: 18px; }
+.cc-info { display: grid; gap: 4px; font-size: 13px; color: var(--muted); background: var(--panel2); border-radius: 12px; padding: 10px 12px; }
+.cc-info > span:first-child { color: var(--text); }
+.cc-mor { display: flex; align-items: center; gap: 8px; } .cc-mor .bar { flex: 1; margin: 0; }
+.cc-act { display: flex; gap: 8px; flex-wrap: wrap; }
+.cc-act .btn { flex: 1; min-width: 120px; background: var(--panel2) !important; border: 0 !important; padding: 8px 10px; }
+.cc-act .btn.primary { background: var(--accent) !important; }
+
+/* scheda giocatore */
+.pc-head { gap: 12px; } .pc-ht { flex: 1; min-width: 0; }
+.ptabs { display: flex; width: 100%; margin: 12px 0 10px; } .ptabs button { flex: 1; }
+.act-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.act-grid .btn { padding: 10px 8px; background: var(--panel2); border: 0; font-size: 13.5px; }
+.act-grid .btn.primary { grid-column: 1 / -1; background: var(--accent); }
+.act-grid .wide { grid-column: 1 / -1; background: none !important; color: var(--bad) !important; }
+.statbox { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 4px 0 6px; }
+.statbox span { background: var(--panel2); border-radius: 12px; padding: 8px 4px; display: grid; justify-items: center; font-size: 11px; color: var(--muted); }
+.statbox b { font-size: 18px; color: var(--text); }
+.modal-box .rows { background: var(--panel2); border-radius: 14px; padding: 10px 12px; }
+.modal-box .story { margin-top: 4px; }
+
+/* mercato */
+.help-link { color: var(--accent2); display: inline-flex; align-items: center; gap: 4px; }
+.help-link .ic { width: 15px; height: 15px; }
+.mk-bond { display: flex !important; }
+.mk-bond { background: var(--panel2); border-radius: 10px; padding: 6px 10px; }
+.intel-box { margin: 0 !important; padding: 0 !important; background: none !important; }
+.intel-box li { background: var(--panel2) !important; }
