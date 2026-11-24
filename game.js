@@ -2056,7 +2056,7 @@ function advance() {
     for (const p of clients()) if (p.team != null) earn(p.salary * 1e6 * p.comm / 100 / REG_WEEKS);
     for (const p of Object.values(S.players)) {
       if (p.injury) p.injury--;
-      else if (p.injDebt) { p.injDebt--; p.ovr = Math.min(99, p.ovr + 1); p.pot = Math.max(p.pot, p.ovr); } // torna in forma un punto a settimana
+      else if (p.injDebt) { p.injDebt--; p.ovr = Math.min(99, p.ovr + 1); p.pot = Math.max(p.pot, p.ovr); if (!p.injDebt && isClient(p)) addNews(`💪 <b>${esc(p.name)}</b> è di nuovo al top della forma: valutazione ${p.ovr}.`, 'good'); } // torna in forma un punto a settimana
       p.hype = Math.max(0, p.hype * 0.98 + (p.team != null && p.gp ? (avg(p, 'pts') - 12) * 0.05 : 0));
     }
     moraleDrift();
@@ -2108,6 +2108,8 @@ function advance() {
     // gli obiettivi arrivano subito dopo l'avviso degli imprevisti, uno alla volta
     if (goals.length) setTimeout(() => goals.length === 1 ? toast(...goals[0])
       : toast(goals.slice(0, 3).map(a => a[0]).join(' · ') + (goals.length > 3 ? ` e altri ${goals.length - 3}` : ''), 'goal', `${goals.length} traguardi!`), busy ? 3600 : 0);
+    const down = UI.devDown; UI.devDown = null;
+    if (down) setTimeout(() => toast(...down), (busy ? 3600 : 0) + (goals.length ? 3800 : 0));
     if (S.inbox.length) {
       UI.focusEvents(false);
       const rare = S.inbox.find(e => e.rare);
@@ -2564,6 +2566,7 @@ function injuryHit(p, weeks) {
   if (weeks < 3 || hasTrait(p, 'professionista')) return;
   const k = Math.min(4, Math.ceil(weeks / 5));
   p.ovr = Math.max(35, p.ovr - k); p.injDebt = (p.injDebt || 0) + k;
+  if (isClient(p)) addNews(`🩹 Lo stop pesa: <b>${esc(p.name)}</b> perde ${k} punt${k > 1 ? 'i' : 'o'} di valutazione (ora ${p.ovr}). Li recupera piano piano quando torna in campo.`, 'bad');
 }
 
 /* ---------- Camp estivo con una leggenda ---------- */
@@ -2613,12 +2616,28 @@ function legendCamp(pid, ci) {
   return { msg: txt, type: gain ? 'good' : 'info' };
 }
 
+// com'è andata l'estate dei tuoi giocatori: le crescite sono una festa, i cali un campanello d'allarme
+const UP_TXT = ['ha passato l\'estate in palestra e si vede', 'è tornato dalle vacanze un altro giocatore', 'ha lavorato ogni giorno sul tiro', 'ha messo su muscoli dove servivano', 'ha fatto il salto che aspettavi'];
+const DOWN_TXT = ['ha perso un passo', 'si è presentato al raduno fuori forma', 'comincia a sentire gli anni', 'non è più esplosivo come prima'];
+function devNews(dev) {
+  if (!dev.length) return;
+  dev.sort((a, b) => (b[0].ovr - b[1]) - (a[0].ovr - a[1]));
+  for (const [p, was] of dev) {
+    const d = p.ovr - was;
+    if (d > 0) addNews(`${d >= 4 ? '🚀' : '📈'} <b>${esc(p.name)}</b> ${pick(UP_TXT)}: valutazione da ${was} a <b>${p.ovr}</b> (+${d})${d >= 4 ? '. Che estate!' : '.'}`, d >= 3 ? 'gold' : 'good');
+    else addNews(`📉 <b>${esc(p.name)}</b> ${pick(DOWN_TXT)}: valutazione da ${was} a <b>${p.ovr}</b> (−${-d}).${p.age >= 30 ? ' Il centro di allenamento e lo staff personale possono rallentare il declino.' : ''}`, 'bad');
+  }
+  const ups = dev.filter(([p, w]) => p.ovr > w), downs = dev.filter(([p, w]) => p.ovr < w);
+  const fmtD = ([p, w]) => `${p.name} ${p.ovr > w ? '+' + (p.ovr - w) : '−' + (w - p.ovr)}`;
+  if (ups.length) (UI.goalQueue = UI.goalQueue || []).push([ups.slice(0, 3).map(fmtD).join(' · ') + (ups.length > 3 ? ` e altri ${ups.length - 3}` : ''), 'goal', ups.length > 1 ? 'Sono cresciuti!' : `${ups[0][0].name} è cresciuto!`]);
+  if (downs.length) UI.devDown = [downs.slice(0, 3).map(fmtD).join(' · ') + (downs.length > 3 ? ` e altri ${downs.length - 3}` : ''), 'warn', downs.length > 1 ? 'In calo' : `${downs[0][0].name} è in calo`];
+}
 function offseason() {
   const played = S.history.length + 1;
   if ([1, 2, 3, 5, 10, 20, 30].includes(played)) track('stagioni-giocate-' + played);
   // promemoria: copia la partita ogni tanto
   if (played >= 2 && (S.lastExport == null || S.lastExport < S.season - 1)) addNews('💾 Hai giocato tante stagioni: in Home, sezione Impostazioni, puoi <b>esportare il salvataggio</b>. Se il telefono cancella i dati del sito, con quello riprendi da dove eri.', 'warn');
-  const retiredNow = [];
+  const retiredNow = [], dev = [];
   for (const p of Object.values(S.players)) {
     if (p.retired) continue;
     p.age++;
@@ -2630,6 +2649,7 @@ function offseason() {
       addNews(`🌟 <b>${esc(p.name)}</b> è arrivato a <b>${lvl}</b> di valutazione${p.academy ? ', ed è cresciuto nella tua accademia' : ''}!`, 'gold');
       if (p.academy && lvl >= 90) checkGoal('homegrown', true);
     }
+    if (isClient(p) && p.ovr !== before) { dev.push([p, before]); p.dev = { season: S.season + 1, d: p.ovr - before }; }
     if (isClient(p) && p.potNote === 'up') addNews(`🔥 ${esc(p.name)} vuole sempre migliorare: il suo potenziale è salito a ${p.pot}.`, 'good');
     if (isClient(p) && p.potNote === 'down') addNews(`😴 ${esc(p.name)} si è accontentato: il suo potenziale è sceso a ${p.pot}.`, 'warn');
     if (p.team != null) p.career.seasons++;
@@ -2644,6 +2664,7 @@ function offseason() {
     p.sponsors = p.sponsors.map(s => ({ ...s, years: s.years - 1 })).filter(s => s.years > 0);
     p.hype *= 0.6;
   }
+  devNews(dev.filter(([p]) => !p.retired));
   for (const p of retiredNow) {
     if (isClient(p)) {
       const c = p.career, bonus = c.titles * 2 + c.allstar * 0.8 + c.mvp * 4 + c.seasons * 0.2;
@@ -3167,7 +3188,7 @@ const UI = {
     const stats = t && p.gp ? `<div class="pl-stats"><span><b>${r1(avg(p, 'min'))}</b>MIN</span><span><b>${r1(avg(p, 'pts'))}</b>PTS</span><span><b>${r1(avg(p, 'reb'))}</b>REB</span><span><b>${r1(avg(p, 'ast'))}</b>AST</span></div>` : '';
     return `<button class="pl" onclick="UI.player(${p.id})">
       ${avatarSVG(p, 52)}
-      <span class="pl-main"><span class="pl-name"><b>${esc(p.name)}</b><span class="ov ${this.ovrClass(p.ovr)}">${p.ovr}</span></span>
+      <span class="pl-main"><span class="pl-name"><b>${esc(p.name)}</b><span class="ov ${this.ovrClass(p.ovr)}">${p.ovr}</span>${p.dev && p.dev.season === S.season ? `<span class="dv ${p.dev.d > 0 ? 'up' : 'down'}">${p.dev.d > 0 ? '↑' : '↓'}${Math.abs(p.dev.d)}</span>` : ''}</span>
         <span class="pl-sub">${careerPhase(p).join(' ')} · ${p.pos} · ${p.age} anni${t ? ` · ${esc(t.name)} #${p.num}` : ''}${t && p.gp ? ` · ${p.gp} gare` : ''}</span>
         <span class="pl-meta">${meta}</span>${stats}</span>
       ${L && t ? `<span class="pl-last"><span class="grade ${gradeClass(L.grade)}">${L.grade}</span><small>ultima</small></span>` : ''}

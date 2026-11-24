@@ -37,7 +37,7 @@ Claude Code legge questo file da solo all'inizio di ogni sessione su questo prog
 **Ordine degli script** in `index.html` e in `tools/build_artifact.py`: names, nations, events, events_extra, traits, tuning, records_data, art, game. Se aggiungi un file JS, mettilo in tutti e due i posti e anche nella lista `APP` di `sw.js`.
 
 ## Regole da rispettare sempre
-1. **Ad ogni rilascio** cambia il numero di `CACHE` in `sw.js` (ora `hoop-agent-v36`), così i telefoni scaricano la versione nuova.
+1. **Ad ogni rilascio** cambia il numero di `CACHE` in `sw.js` (ora `hoop-agent-v37`), così i telefoni scaricano la versione nuova.
 2. **I salvataggi vecchi devono continuare a funzionare.**
    - Lo stato è l'oggetto globale `S`, salvato in localStorage con la chiave `SAVE_KEY = 'superAgenteNBA.save.v2'`. Non cambiare la chiave.
    - Ogni campo nuovo va gestito anche quando manca, nella riga `if (S) { ... }` in fondo a `game.js` e/o con valori predefiniti (`|| 0`).
@@ -75,7 +75,7 @@ Servono Node e Playwright (`require('playwright')`). Ogni script si lancia da so
 - **Bisogni e scambi:** `teamNeeds(tid)` dice in quali ruoli una squadra ha più bisogno (confronto di titolare e riserva con il resto della lega); si vede quando consigli un giocatore. Per i clienti sotto contratto c'è lo scambio (`UI.tradeModal`, `tradeCands`, `tradeOdds`, `proposeTrade`): scegli squadra e contropartita, devono dire sì tutte e due, con tetto salariale rispettato. Mercato aperto in Free Agency e fino alla settimana 14. Uno scambio riuscito a stagione per giocatore. Dopo 8 settimane `tradeWeek` giudica: la squadra che ci ha guadagnato paga un premio (`tradeFee`, max 60k) e il rapporto sale; quella che ci ha perso abbassa il rapporto.
 - **Trattative con le squadre:** forbice di valore, preferenze del giocatore, scadenze, asta e bluff, salary cap e apron.
 - **Ruoli e minuti:** gerarchie per ruolo (`depthChart`): titolare, riserva, terzo. Le riserve forti giocano anche nel ruolo vicino, e gli infortuni fanno salire il sostituto dello stesso ruolo.
-- **Carriera:** potenziale legato all'età (`potRoom`, `capPot`), crescita e declino (`developPlayer`), infortuni (`injuryHit`, `careFactor`).
+- **Carriera:** potenziale legato all'età (`potRoom`, `capPot`), crescita e declino (`developPlayer`), infortuni (`injuryHit`, `careFactor`). A fine estate `devNews` dà la notizia di chi è salito (festa, avviso "Sono cresciuti!") e di chi è sceso (avviso "In calo"); `p.dev` mette la freccia ↑/↓ accanto alla valutazione per tutta la stagione. Gli infortuni lunghi avvisano del calo di forma e del ritorno al top.
 - **Concorrenza sui prospetti:** `rivalCourtWeek` fa corteggiare dalle agenzie rivali i primi 30 del Draft, sempre più spesso verso fine stagione (al Draft ne restano liberi circa 2-5 dei primi 10). Dopo 2-4 settimane `rivalDeadlines` decide: con legame 60+ il ragazzo dice sempre no, altrimenti firma con il rivale con probabilità 0,85 meno il legame.
 - **Soffiate dell'informatore:** `S.intel` con tipo (`rival`, `bond`, `pot`). Scadono da sole (`intelValid`, `pruneIntel`): spariscono quando firmi il ragazzo, quando firma con un rivale, quando passa la scadenza o dopo il Draft. Per i rivali il testo si aggiorna ogni settimana (`intelText`) con tre livelli (`rivalStage`): ancora agli inizi, in contatto ravvicinato, questione di firme.
 - **Osservare i prospetti:** `scout(pid)` costa 7k (12k all'estero), ogni livello della rete di scout toglie il 12%, massimo 4 a settimana (`SCOUT_MAX`, `scoutsLeft`).
