@@ -1074,6 +1074,38 @@ function sponsorValue(p) {
   const base = Math.pow(clamp((p.ovr - 60) / 33, 0.03, 1.2), 2) * 5;
   return r1(Math.max(0.1, base * (0.7 + mkt * 0.6) * (1 + p.hype / 100) * (1 + S.staff.marketing * 0.08) * (p.campaignSeason === S.season ? 1.15 : 1)));
 }
+// Quanto è contento un giocatore sotto contratto: minuti, stipendio e squadra. Da -1 (scontento) a +1 (felice).
+const expMin = p => p.ovr >= 84 ? 32 : p.ovr >= 78 ? 27 : p.ovr >= 72 ? 20 : p.ovr >= 66 ? 13 : 8;
+function happiness(p) {
+  const t = teamOf(p); if (!t) return null;
+  const pr = prefOf(p), e = depthChart(t.id, false).get(p.id) || { slot: 'deep', min: 0 }, want = expMin(p);
+  const mins = clamp((e.min - want) / 8, -1, 1);
+  const mv = marketValue(p), ratio = p.salary / mv;
+  const pay = clamp((ratio - 0.9) * 4, -1, 1);
+  const cr = confRank(t.id), early = t.w + t.l < 8;
+  const winS = early ? clamp((teamStrength(t.id) - 74) / 4, -1, 1) : cr <= 4 ? 1 : cr <= 8 ? 0.4 : cr <= 11 ? -0.3 : -1;
+  const cityS = t.market >= 0.75 ? 1 : t.market >= 0.5 ? 0.3 : t.market >= 0.3 ? -0.3 : -0.8;
+  const place = pr === 'citta' ? cityS : pr === 'vincere' ? winS : winS * 0.6 + cityS * 0.4;
+  const roleTxtShort = roleLabel(e, p) + (e.min ? `, circa ${e.min} minuti` : '');
+  const rows = [
+    { k: 'min', label: 'Minuti', v: mins, main: pr === 'minuti',
+      txt: mins >= 0.3 ? `${roleTxtShort}: è il ruolo che si aspettava.` : mins >= -0.3 ? `${roleTxtShort}: gli va bene, ma non di più.` : `${roleTxtShort}: si sente da almeno ${want} minuti a partita.` },
+    { k: 'pay', label: 'Stipendio', v: pay, main: pr === 'soldi',
+      txt: pay >= 0.3 ? `Prende ${fmtM(p.salary)} e si sente pagato bene.` : pay >= -0.3 ? `Prende ${fmtM(p.salary)}: giusto, niente di più.` : `Prende ${fmtM(p.salary)}, ma pensa di valerne almeno ${fmtM(Math.round(mv * 10) / 10)}.` },
+    { k: 'place', label: 'Squadra', v: place, main: pr === 'vincere' || pr === 'citta',
+      txt: pr === 'citta' ? (cityS >= 0.3 ? `Gli piace vivere a ${t.city}.` : `${t.city} gli sta stretta: sogna una grande città.`)
+        : winS >= 0.4 ? `I ${t.name} sono ${early ? 'una delle rose migliori' : `${cr}ª a ${CONF_NAME[confOf(t)]}`}: si sente in una squadra vincente.`
+        : winS >= -0.3 ? `I ${t.name} sono a metà classifica: spera in qualcosa di più.` : `I ${t.name} perdono troppo e lui ne soffre.` },
+  ];
+  const tot = rows.reduce((s, r) => s + r.v * (r.main ? 2 : 1), 0) / 4;
+  const worst = [...rows].sort((a, b) => (a.v * (a.main ? 2 : 1)) - (b.v * (b.main ? 2 : 1)))[0];
+  let wish;
+  if (worst.v >= 0.2) wish = 'È contento così: tienilo felice e non toccare niente.';
+  else if (worst.k === 'min') wish = `Vuole più spazio: una squadra che cerca ${POS_ART[p.pos]} potrebbe farlo giocare di più. Puoi proporgli uno scambio.`;
+  else if (worst.k === 'pay') wish = p.years <= 1 ? 'Vuole un aumento: il contratto scade a fine stagione, al rinnovo punta in alto.' : `Vuole guadagnare di più: tra ${p.years} anni, al rinnovo, punterà in alto. Uno sponsor lo aiuterebbe ad aspettare.`;
+  else wish = pr === 'citta' ? 'Vuole cambiare aria e andare in una grande città.' : 'Vuole giocare in una squadra che punta ai playoff.';
+  return { rows, tot, wish, pref: pr };
+}
 function moraleDrift() {
   for (const p of clients()) {
     let d = 0;
@@ -1083,6 +1115,8 @@ function moraleDrift() {
       const ratio = p.salary / marketValue(p);
       if (ratio < 0.7) d -= 1.5;
       if (ratio > 1.1) d += 0.5;
+      const h = happiness(p);
+      if (h) d += h.rows[0].v * (h.pref === 'minuti' ? 1.2 : 0.6) + (h.pref === 'citta' ? h.rows[2].v * 0.6 : 0);
     } else if (!p.school && S.phase === 'reg') d -= 3; // disoccupato
     d += (65 - p.morale) * 0.03; // ritorno verso la media
     p.morale = clamp(Math.round(p.morale + d), 0, 100);
@@ -3103,6 +3137,7 @@ const UI = {
         ${t ? `<span>${fmtM(p.salary)} per ${p.years} ann${p.years > 1 ? 'i' : 'o'} · a te ${fmt$(p.salary * 1e6 * p.comm / 100)} l'anno</span>` : ''}
         ${p.injury ? `<span class="bad">Infortunato, fermo ${p.injury} sett.</span>` : ''}
         ${prom ? `<span class="warn">${prom} promess${prom > 1 ? 'e' : 'a'} da mantenere</span>` : ''}
+        ${t ? (() => { const h = happiness(p); const c = v => v >= 0.3 ? 'good' : v >= -0.3 ? 'warn' : 'bad'; return `<span class="cc-hap">${h.rows.map(r => `<span><i class="dot ${c(r.v)}"></i>${r.label}</span>`).join('')}</span>`; })() : ''}
         <span class="cc-mor">Rapporto ${p.morale}/100<span class="bar"><i style="width:${p.morale}%;background:${mc}"></i></span></span>
       </div>
       <div class="cc-act">
@@ -3242,7 +3277,7 @@ const UI = {
     let box = document.getElementById('weekres');
     if (!box) { box = document.createElement('div'); box.id = 'weekres'; document.body.appendChild(box); }
     const mine = D.picks.filter(x => x.mine);
-    const row = (x, i) => `<div class="dn-row ${x.mine ? 'mine' : ''}" style="animation-delay:${Math.min(i, 30) * 70}ms">
+ const row = (x, i) => `<div class="dn-row tap ${x.mine ? 'mine' : ''}" onclick="UI.player(${x.pid})" role="button" style="animation-delay:${Math.min(i, 30) * 70}ms">
         <span class="dn-n">#${x.n}</span><div class="dn-info"><b>${esc(x.name)}${x.mine ? ' <span class="tag fa">tuo</span>' : ''}</b>
         <span>${esc(S.teams[x.tid].name)} · ${x.pos} · ${esc(x.school || '')}</span></div>
         ${x.proj ? `<span class="dn-proj ${x.proj - x.n >= 3 ? 'good' : x.n - x.proj >= 3 ? 'bad' : ''}">prev. #${x.proj}</span>` : ''}</div>`;
@@ -3277,7 +3312,7 @@ const UI = {
       ${best && best.g.grade[0] === 'A' ? `<div class="wr-top">Partita top: <b>${esc(best.p.name)}</b> ${best.g.pts} pt · ${best.g.reb} rb · ${best.g.ast} as <span class="grade ${gradeClass(best.g.grade)}">${best.g.grade}</span></div>` : ''}
       <div class="wr-list">${rows.map(p => {
         const L = p.week[p.week.length - 1], w = p.week.filter(g => g.win).length, n = p.week.length;
-        return `<div class="wr-row ${L.grade[0] === 'A' ? 'top' : ''}">${avatarSVG(p, 40)}
+        return `<div class="wr-row tap ${L.grade[0] === 'A' ? 'top' : ''}" onclick="clearTimeout(UI.wrTimer);UI.player(${p.id})" role="button">${avatarSVG(p, 40)}
           <div class="wr-info"><b>${esc(p.name)}</b><span>${L.win ? '<b class="good">V</b>' : '<b class="bad">P</b>'} ${L.us}-${L.them} ${L.home ? 'vs' : '@'} ${esc(S.teams[L.opp].name)} · settimana ${w}-${n - w}${n < 4 ? ` (${4 - n} saltat${4 - n > 1 ? 'e' : 'a'})` : ''}</span>
           <span class="wr-line">${L.min != null ? `${L.min}' · ` : ''}${L.pts} pt · ${L.reb} rb · ${L.ast} as</span></div>
           <span class="grade big ${gradeClass(L.grade)}">${L.grade}</span></div>`;
@@ -3441,9 +3476,18 @@ const UI = {
   },
 
   /* ---------- Scheda giocatore ---------- */
+  happyBox(p) {
+    const h = happiness(p); if (!h) return '';
+    const cls = v => v >= 0.3 ? 'good' : v >= -0.3 ? 'warn' : 'bad';
+    const word = v => v >= 0.3 ? 'contento' : v >= -0.3 ? 'così così' : 'scontento';
+    return `<div class="happy"><div class="happy-h"><b>È contento?</b><span class="${cls(h.tot)}">${h.tot >= 0.3 ? 'Sì' : h.tot >= -0.3 ? 'Abbastanza' : 'No'}</span></div>
+      ${h.rows.map(r => `<div class="happy-r"><span class="happy-l"><i class="dot ${cls(r.v)}"></i>${r.label}${r.main ? ' <small>(per lui conta di più)</small>' : ''}<em class="${cls(r.v)}">${word(r.v)}</em></span><small>${esc(r.txt)}</small></div>`).join('')}
+      <div class="happy-w">${ic('chat')}<span><b>Cosa vuole:</b> ${esc(h.wish)}</span></div></div>`;
+  },
   ptab: 'info',
   player(pid, tab) {
-    const p = P(pid), t = teamOf(p), mine = isClient(p), ex = exact(p);
+    const p = P(pid); if (!p) return toast('Questo giocatore non è più nella lega.', 'info');
+    const t = teamOf(p), mine = isClient(p), ex = exact(p);
     const c = p.career;
     if (tab) this.ptab = tab; else if (this.ptabPid !== pid) this.ptab = 'info';
     this.ptabPid = pid;
@@ -3466,6 +3510,7 @@ const UI = {
         ${p.sponsors.length ? `<dt>Sponsor</dt><dd>${p.sponsors.map(s => `${esc(s.brand)} ${fmtM(s.value)} (${s.years}a)`).join('<br>')}</dd>` : ''}
         ${(p.promises || []).length ? `<dt>Promesse</dt><dd>${p.promises.map(pr => `${promiseStatus(p, pr)} ${esc(PROMISES[pr.k].label)}${pr.season > S.season ? ' (prossima stagione)' : ''}`).join('<br>')}</dd>` : ''}
       </dl>
+      ${mine && t ? this.happyBox(p) : ''}
       <div class="act-grid">
         ${mine ? `${offers ? `<button class="btn primary" onclick="UI.negotiation(${p.id})">Offerte (${offers})</button>` : ''}
           <button class="btn" onclick="UI.giftModal(${p.id})" ${p.lastContact === S.turn ? 'disabled' : ''}>${ic('heart')} Regalo</button>
@@ -3769,7 +3814,7 @@ Object.assign(UI, {
   poSeries(s, ph) {
     if (!s) return `<div class="po-s empty">${ph || '<div class="po-t"><b>da definire</b></div>'}</div>`;
     const my = myTeamIds();
-    const row = (tid, wins) => `<div class="po-t ${s.w === tid ? 'w' : s.w != null ? 'l' : ''} ${my.has(tid) ? 'mine' : ''}">
+    const row = (tid, wins) => `<div class="po-t tap ${s.w === tid ? 'w' : s.w != null ? 'l' : ''} ${my.has(tid) ? 'mine' : ''}" onclick="UI.teamModal(${tid})" role="button">
       <span class="sd">${this.poSeed(tid, s)}</span><b>${S.teams[tid].abbr}</b>${my.has(tid) ? '<i class="po-dot"></i>' : ''}<span class="wn">${s.bo === 1 ? (s.g[0] ? (tid === s.g[0].h ? s.g[0].hs : s.g[0].as) : '') : wins}</span></div>`;
     const g7 = s.g.length === 7 || isGame7(s);
     return `<div class="po-s ${my.has(s.a) || my.has(s.b) ? 'mine' : ''}">${g7 ? '<span class="po-g7">Gara 7</span>' : ''}${row(s.a, s.wa)}${row(s.b, s.wb)}</div>`;
@@ -3797,11 +3842,11 @@ Object.assign(UI, {
     const out = [];
     for (const side of ['h', 'a']) for (const l of G.box[side]) {
       const p = S.players[l.pid]; if (!isClient(p)) continue;
-      out.push(`<div class="po-me">${avatarSVG(p, 30)}<span><b>${esc(p.name)}</b><small>${l.min}' · ${l.pts} pt · ${l.reb} rb · ${l.ast} as</small></span><span class="grade ${gradeClass(l.grade)}">${l.grade}</span></div>`);
+      out.push(`<div class="po-me tap" onclick="UI.player(${p.id})" role="button">${avatarSVG(p, 30)}<span><b>${esc(p.name)}</b><small>${l.min}' · ${l.pts} pt · ${l.reb} rb · ${l.ast} as</small></span><span class="grade ${gradeClass(l.grade)}">${l.grade}</span></div>`);
     }
     return out.join('');
   },
-  poNotes(G) { return (G.notes || []).map(n => `<div class="po-note ${n.gold ? 'gold' : n.mine ? 'mine' : ''}">${ic(n.gold ? 'trophy' : 'star')}<span>${esc(n.t)}</span></div>`).join(''); },
+  poNotes(G) { return (G.notes || []).map(n => `<div class="po-note tap ${n.gold ? 'gold' : n.mine ? 'mine' : ''}" ${n.pid != null ? `onclick="UI.player(${n.pid})" role="button"` : ''}>${ic(n.gold ? 'trophy' : 'star')}<span>${esc(n.t)}</span></div>`).join(''); },
   poDraw() {
     const po = S.po, box = document.getElementById('poview'); if (!box) return;
     clearInterval(this.poTimer); this.poTimer = null;
@@ -3813,8 +3858,8 @@ Object.assign(UI, {
       top = `<div class="po-champ" style="--tc:${ct.color};--tc2:${ct.color2}">
         <div class="po-cup">${ic('trophy')}</div><small>Campioni ${esc(po.season)}</small><h2>${esc(teamName(ct))}</h2>
         <p>Finali vinte ${Math.max(fin.wa, fin.wb)}-${Math.min(fin.wa, fin.wb)} contro i ${esc(teamName(S.teams[poLoser(fin)]))}${fin.g.length === 7 ? ', a gara 7' : ''}.</p>
-        ${mvp ? `<p class="small">MVP delle Finali: <b>${esc(mvp.name)}</b>${isClient(mvp) ? ' <span class="tag fa">tuo</span>' : ''} · ${po.fmvp.line}</p>` : ''}
-        ${rings.length ? `<p class="po-ring">${ic('ring')} ${rings.map(p => `<b>${esc(p.name)}</b>`).join(', ')} ${rings.length > 1 ? 'vincono' : 'vince'} l'anello!</p>` : ''}
+        ${mvp ? `<p class="small">MVP delle Finali: <b class="tap" onclick="UI.player(${mvp.id})">${esc(mvp.name)}</b>${isClient(mvp) ? ' <span class="tag fa">tuo</span>' : ''} · ${po.fmvp.line}</p>` : ''}
+        ${rings.length ? `<p class="po-ring">${ic('ring')} ${rings.map(p => `<b class="tap" onclick="UI.player(${p.id})">${esc(p.name)}</b>`).join(', ')} ${rings.length > 1 ? 'vincono' : 'vince'} l'anello!</p>` : ''}
         ${S.phase === 'po' ? `<button class="btn primary big" onclick="UI.poClose();advance()">Continua la stagione ▶</button>` : ''}</div>`;
     } else if (live) {
       const act = poActive(), my = myTeamIds(), feat = poFeatured();
@@ -3884,7 +3929,7 @@ Object.assign(UI, {
     if (!follow.length) follow = ['h', 'a'].map(sd => [...G.box[sd]].sort((x, y) => S.players[y.pid].ovr - S.players[x.pid].ovr)[0].pid);
     const L = { t: 0, i: 0, hs: 0, as: 0, feed: [], st: {}, done: false, marks: {} };
     for (const l of inBox) L.st[l.pid] = { pts: 0, reb: 0, ast: 0 };
-    const nm = pid => { const p = S.players[pid]; return `<b class="${my.has(pid) ? 'me' : ''}">${esc(p.name)}</b>`; };
+    const nm = pid => { const p = S.players[pid]; return `<b class="tap ${my.has(pid) ? 'me' : ''}" onclick="UI.player(${pid})">${esc(p.name)}</b>`; };
     const clockTxt = t => {
       const reg = 4 * PER, per = t < reg ? Math.min(3, Math.floor(t / PER)) : Math.floor((t - reg) / OTL);
       const len = t < reg ? PER : OTL, into = t < reg ? t - per * PER : t - reg - per * OTL, left = Math.max(0, Math.ceil(len - into));
@@ -3910,7 +3955,7 @@ Object.assign(UI, {
     const drawFollow = () => {
       $('pl-fol').innerHTML = deEmo(follow.map(pid => {
         const p = S.players[pid], st = L.st[pid], l = inBox.find(x => x.pid === pid);
-        return `<div class="po-me ${my.has(pid) ? '' : 'other'}">${avatarSVG(p, 30)}<span><b>${esc(p.name)}</b><small>${Math.round(l.min * Math.min(1, L.t / pbp.end))}' in campo · ${S.teams[p.team] ? S.teams[p.team].abbr : ''}</small></span>
+        return `<div class="po-me tap ${my.has(pid) ? '' : 'other'}" onclick="UI.player(${pid})" role="button">${avatarSVG(p, 30)}<span><b>${esc(p.name)}</b><small>${Math.round(l.min * Math.min(1, L.t / pbp.end))}' in campo · ${S.teams[p.team] ? S.teams[p.team].abbr : ''}</small></span>
           <span class="po-stat"><b>${st.pts}</b> pt <b>${st.reb}</b> rb <b>${st.ast}</b> as</span></div>`;
       }).join(''));
     };
@@ -3958,7 +4003,7 @@ Object.assign(UI, {
         ${G.result ? `<div class="po-sres">${ic('trophy')} <b>${esc(G.result)}</b></div>` : `<div class="po-sres small">${this.poStatus(s2)}</div>`}
         ${this.poNotes(G)}
         <div class="po-ch">Migliori in campo</div>
-        ${['h', 'a'].map(sd => { const l = top(sd), p = S.players[l.pid]; return `<div class="po-top">${teamChip(G[sd])} <b>${esc(p.name)}</b> <span class="muted">${l.pts} pt · ${l.reb} rb · ${l.ast} as</span></div>`; }).join('')}
+        ${['h', 'a'].map(sd => { const l = top(sd), p = S.players[l.pid]; return `<div class="po-top tap" onclick="UI.player(${p.id})" role="button">${teamChip(G[sd])} <b>${esc(p.name)}</b> <span class="muted">${l.pts} pt · ${l.reb} rb · ${l.ast} as</span></div>`; }).join('')}
         ${this.poMine(G) ? `<div class="po-ch">I tuoi clienti</div>${this.poMine(G)}` : ''}
         <button class="btn primary big" onclick="UI.poDraw()">Torna al tabellone</button></div>`);
       $('pl-final').scrollIntoView({ block: 'nearest', behavior: 'smooth' });

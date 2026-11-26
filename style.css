@@ -1019,3 +1019,23 @@ tr.mine td { background: color-mix(in srgb, var(--accent) 10%, transparent) !imp
 .mk-bond { background: var(--panel2); border-radius: 10px; padding: 6px 10px; }
 .intel-box { margin: 0 !important; padding: 0 !important; background: none !important; }
 .intel-box li { background: var(--panel2) !important; }
+
+/* giocatori toccabili ovunque, anche sopra playoff e risultati */
+.modal { z-index: 38; }
+.toast:not(.arc) { z-index: 39; }
+.tap { cursor: pointer; }
+.po-ev b.tap, .po-champ b.tap { text-decoration: underline; text-decoration-color: rgba(255,255,255,.25); text-underline-offset: 3px; }
+
+/* è contento? */
+.happy { background: var(--panel2); border-radius: 14px; padding: 12px; margin-top: 10px; display: grid; gap: 8px; }
+.happy-h { display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+.happy-h span { font-weight: 700; }
+.happy-r { display: grid; gap: 1px; }
+.happy-l { display: flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 600; }
+.happy-l small { color: var(--muted); font-weight: 400; font-size: 11.5px; }
+.happy-l em { margin-left: auto; font-style: normal; font-size: 12px; font-weight: 700; }
+.happy-r > small { color: var(--muted); font-size: 12.5px; padding-left: 14px; }
+.happy-w { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; border-top: 1px solid var(--line); padding-top: 8px; }
+.happy-w .ic { width: 16px; height: 16px; flex: none; margin-top: 2px; color: var(--accent2); }
+.cc-hap { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
+.cc-hap span { display: inline-flex; align-items: center; gap: 5px; }
