@@ -1039,3 +1039,10 @@ tr.mine td { background: color-mix(in srgb, var(--accent) 10%, transparent) !imp
 .happy-w .ic { width: 16px; height: 16px; flex: none; margin-top: 2px; color: var(--accent2); }
 .cc-hap { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
 .cc-hap span { display: inline-flex; align-items: center; gap: 5px; }
+.mood { font-size: 18px; font-weight: 800; }
+.mood.good { color: var(--good); } .mood.warn { color: var(--warn); } .mood.bad { color: var(--bad); }
+.happy-h small { color: var(--muted); font-size: 12.5px; } .happy-h small b { color: var(--text); }
+.treq { display: grid; grid-template-columns: auto 1fr; gap: 6px 8px; align-items: start; background: color-mix(in srgb, var(--bad) 14%, transparent); border-radius: 12px; padding: 10px; font-size: 13px; }
+.treq .ic { width: 16px; height: 16px; color: var(--bad); margin-top: 2px; }
+.treq .btn { grid-column: 1 / -1; }
+.cc-hap { gap: 8px; } .cc-hap b { font-weight: 800; }

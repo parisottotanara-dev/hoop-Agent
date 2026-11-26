@@ -1100,11 +1100,33 @@ function happiness(p) {
   const tot = rows.reduce((s, r) => s + r.v * (r.main ? 2 : 1), 0) / 4;
   const worst = [...rows].sort((a, b) => (a.v * (a.main ? 2 : 1)) - (b.v * (b.main ? 2 : 1)))[0];
   let wish;
-  if (worst.v >= 0.2) wish = 'È contento così: tienilo felice e non toccare niente.';
+  if (worst.v >= 0.2) wish = 'Sta bene dov\'è: non toccare niente.';
   else if (worst.k === 'min') wish = `Vuole più spazio: una squadra che cerca ${POS_ART[p.pos]} potrebbe farlo giocare di più. Puoi proporgli uno scambio.`;
   else if (worst.k === 'pay') wish = p.years <= 1 ? 'Vuole un aumento: il contratto scade a fine stagione, al rinnovo punta in alto.' : `Vuole guadagnare di più: tra ${p.years} anni, al rinnovo, punterà in alto. Uno sponsor lo aiuterebbe ad aspettare.`;
   else wish = pr === 'citta' ? 'Vuole cambiare aria e andare in una grande città.' : 'Vuole giocare in una squadra che punta ai playoff.';
   return { rows, tot, wish, pref: pr };
+}
+const MOODS = [[0.55, 'Felicissimo', 'good'], [0.2, 'Felice', 'good'], [-0.2, 'Neutro', 'warn'], [-0.5, 'Scontento', 'bad'], [-9, 'Molto scontento', 'bad']];
+const moodOf = tot => MOODS.find(m => tot >= m[0]);
+// il motivo, come in trattativa: quello che per lui conta e che qui non trova
+function moodReason(p, h) {
+  const worst = [...h.rows].sort((a, b) => (a.v * (a.main ? 2 : 1)) - (b.v * (b.main ? 2 : 1)))[0];
+  return worst.k === 'min' ? 'vuole giocare più minuti' : worst.k === 'pay' ? 'vuole i soldi che pensa di meritare' : h.pref === 'citta' ? 'vuole vivere in una grande città' : 'vuole vincere';
+}
+// chi è molto scontento chiede di essere ceduto; la richiesta resta finché non lo scambi o non torna sereno
+function tradeRequests() {
+  for (const p of clients()) {
+    const h = happiness(p);
+    if (!h) { p.tradeReq = null; continue; }
+    if (p.tradeReq && h.tot >= -0.2) { p.tradeReq = null; addNews(`🙂 <b>${esc(p.name)}</b> si è calmato: non chiede più di andarsene.`, 'good'); continue; }
+    if (!p.tradeReq && h.tot < -0.5 && S.phase === 'reg') {
+      const why = moodReason(p, h);
+      p.tradeReq = { season: S.season, why };
+      addNews(`📣 <b>${esc(p.name)}</b> ti chiede di essere ceduto: ${why}. Trovagli una squadra con uno scambio, o il rapporto con te ne risentirà.`, 'bad');
+      UI.pendingToast = UI.pendingToast || [`${p.name} chiede di essere ceduto: ${why}.`, 'warn', 'Vuole andarsene'];
+    }
+    if (p.tradeReq) p.morale = clamp(p.morale - 1, 0, 100);
+  }
 }
 function moraleDrift() {
   for (const p of clients()) {
@@ -1504,7 +1526,7 @@ function proposeTrade(pid, tid, xid) {
     rec: { a: [A.w, A.l], b: [B.w, B.l] }, sp: snap(p), sx: snap(x) });
   const fit = teamFit(p, tid, p.salary)[0];
   p.team = tid; if (x) x.team = a;
-  p.tradeDone = S.season; S.tradeV = (S.tradeV || 0) + 1;
+  p.tradeDone = S.season; p.tradeReq = null; S.tradeV = (S.tradeV || 0) + 1;
   p.morale = clamp(p.morale + 3 + Math.round(fit * 5), 0, 100);
   changeTeamRel(tid, 2); changeTeamRel(a, 1);
   addNews(`🔁 Scambio firmato grazie a te: <b>${esc(p.name)}</b> passa ai ${esc(B.name)}${x ? `, ${esc(x.name)} fa il viaggio opposto` : ''}. Tra qualche settimana le squadre tireranno le somme.`, 'good');
@@ -2112,6 +2134,7 @@ function advance() {
       p.hype = Math.max(0, p.hype * 0.98 + (p.team != null && p.gp ? (avg(p, 'pts') - 12) * 0.05 : 0));
     }
     moraleDrift();
+    tradeRequests();
     aiFreeAgency(0.04);
     // offerte a stagione in corso per i clienti senza squadra
     for (const p of clients()) if (p.team == null && !p.school && !S.offers.some(o => o.pid === p.id) && chance(0.3)) {
@@ -3137,7 +3160,7 @@ const UI = {
         ${t ? `<span>${fmtM(p.salary)} per ${p.years} ann${p.years > 1 ? 'i' : 'o'} · a te ${fmt$(p.salary * 1e6 * p.comm / 100)} l'anno</span>` : ''}
         ${p.injury ? `<span class="bad">Infortunato, fermo ${p.injury} sett.</span>` : ''}
         ${prom ? `<span class="warn">${prom} promess${prom > 1 ? 'e' : 'a'} da mantenere</span>` : ''}
-        ${t ? (() => { const h = happiness(p); const c = v => v >= 0.3 ? 'good' : v >= -0.3 ? 'warn' : 'bad'; return `<span class="cc-hap">${h.rows.map(r => `<span><i class="dot ${c(r.v)}"></i>${r.label}</span>`).join('')}</span>`; })() : ''}
+        ${t ? (() => { const h = happiness(p), m = moodOf(h.tot); return `<span class="cc-hap"><b class="${m[2]}">${m[1]}</b>${p.tradeReq ? `<span class="bad">vuole essere ceduto</span>` : `<span>per lui conta ${PREFS[h.pref][1]}</span>`}</span>`; })() : ''}
         <span class="cc-mor">Rapporto ${p.morale}/100<span class="bar"><i style="width:${p.morale}%;background:${mc}"></i></span></span>
       </div>
       <div class="cc-act">
@@ -3479,10 +3502,11 @@ const UI = {
   happyBox(p) {
     const h = happiness(p); if (!h) return '';
     const cls = v => v >= 0.3 ? 'good' : v >= -0.3 ? 'warn' : 'bad';
-    const word = v => v >= 0.3 ? 'contento' : v >= -0.3 ? 'così così' : 'scontento';
-    return `<div class="happy"><div class="happy-h"><b>È contento?</b><span class="${cls(h.tot)}">${h.tot >= 0.3 ? 'Sì' : h.tot >= -0.3 ? 'Abbastanza' : 'No'}</span></div>
-      ${h.rows.map(r => `<div class="happy-r"><span class="happy-l"><i class="dot ${cls(r.v)}"></i>${r.label}${r.main ? ' <small>(per lui conta di più)</small>' : ''}<em class="${cls(r.v)}">${word(r.v)}</em></span><small>${esc(r.txt)}</small></div>`).join('')}
-      <div class="happy-w">${ic('chat')}<span><b>Cosa vuole:</b> ${esc(h.wish)}</span></div></div>`;
+    const m = moodOf(h.tot);
+    return `<div class="happy"><div class="happy-h"><span class="mood ${m[2]}">${m[1]}</span><small>Per lui conta: <b>${PREFS[h.pref][1]}</b></small></div>
+      ${p.tradeReq ? `<div class="treq">${ic('alert')}<span><b>Chiede di essere ceduto:</b> ${esc(p.tradeReq.why)}.</span><button class="btn sm primary" onclick="UI.tradeModal(${p.id})">Proponi uno scambio</button></div>` : ''}
+      ${h.rows.map(r => `<div class="happy-r"><span class="happy-l"><i class="dot ${cls(r.v)}"></i>${r.label}</span><small>${esc(r.txt)}</small></div>`).join('')}
+      ${p.tradeReq ? '' : `<div class="happy-w">${ic('chat')}<span>${esc(h.wish)}</span></div>`}</div>`;
   },
   ptab: 'info',
   player(pid, tab) {
